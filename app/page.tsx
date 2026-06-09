@@ -2,18 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import Markdown from "@/components/Markdown";
-import {
-  downloadMarkdown,
-  downloadCsv,
-  markdownTablesToCsv,
-  printAnswer,
-} from "@/lib/export";
+import SettingsModal from "@/components/SettingsModal";
+import ProjectModal from "@/components/ProjectModal";
+import { downloadMarkdown, downloadCsv, markdownTablesToCsv, printAnswer } from "@/lib/export";
+import { DEFAULT_SETTINGS, DEFAULT_CONNECTORS, type Project, type Settings } from "@/lib/uiTypes";
 
 type Role = "user" | "assistant";
 type Msg = { role: Role; content: string; ts: number; debug?: string; id?: string };
-type Chat = { id: string; title: string; messages: Msg[] };
+type Chat = { id: string; title: string; projectId: string; messages: Msg[] };
 
 const LS_KEY = "intelbot_chats_v1";
+const LS_PROJECTS = "intelbot_projects_v1";
+const LS_SETTINGS = "intelbot_settings_v1";
+
 const STATUSES = [
   "Searching the knowledge base…",
   "Consulting the analysis engines…",
@@ -32,6 +33,8 @@ const EXPORT_BTN_OFF =
 
 export default function Home() {
   const [chats, setChats] = useState<Chat[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [activeId, setActiveId] = useState<string>("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -40,23 +43,52 @@ export default function Home() {
   const [mode, setMode] = useState<"team" | "agent">("team");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [projectModal, setProjectModal] = useState<{ project: Project; isNew: boolean } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
+  // Load projects, settings, and chats (with migration to the project model).
   useEffect(() => {
+    let projs: Project[] = [];
     try {
-      const raw = localStorage.getItem(LS_KEY);
+      projs = JSON.parse(localStorage.getItem(LS_PROJECTS) || "[]");
+    } catch {}
+    if (!Array.isArray(projs) || projs.length === 0) {
+      projs = [{ id: uid(), name: "General", instructions: "" }];
+    }
+    const defaultPid = projs[0].id;
+
+    let st: Settings = DEFAULT_SETTINGS;
+    try {
+      const raw = localStorage.getItem(LS_SETTINGS);
       if (raw) {
-        const parsed: Chat[] = JSON.parse(raw);
-        if (parsed.length) {
-          setChats(parsed);
-          setActiveId(parsed[0].id);
-          return;
-        }
+        const p = JSON.parse(raw);
+        st = {
+          globalInstructions: p.globalInstructions ?? "",
+          connectors: { ...DEFAULT_CONNECTORS, ...(p.connectors || {}) },
+        };
       }
     } catch {}
-    const c = { id: uid(), title: "New chat", messages: [] };
-    setChats([c]);
-    setActiveId(c.id);
+
+    let cs: Chat[] = [];
+    try {
+      cs = JSON.parse(localStorage.getItem(LS_KEY) || "[]");
+    } catch {}
+    if (!Array.isArray(cs)) cs = [];
+    const pids = new Set(projs.map((p) => p.id));
+    cs = cs.map((c) => ({
+      ...c,
+      projectId: c.projectId && pids.has(c.projectId) ? c.projectId : defaultPid,
+    }));
+    if (cs.length === 0) {
+      cs = [{ id: uid(), title: "New chat", projectId: defaultPid, messages: [] }];
+    }
+
+    setProjects(projs);
+    setSettings(st);
+    setChats(cs);
+    setActiveId(cs[0].id);
   }, []);
 
   useEffect(() => {
@@ -67,17 +99,39 @@ export default function Home() {
     }
   }, [chats]);
 
+  useEffect(() => {
+    if (projects.length) {
+      try {
+        localStorage.setItem(LS_PROJECTS, JSON.stringify(projects));
+      } catch {}
+    }
+  }, [projects]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SETTINGS, JSON.stringify(settings));
+    } catch {}
+  }, [settings]);
+
   const active = chats.find((c) => c.id === activeId);
+  const activeProject = projects.find((p) => p.id === active?.projectId) ?? projects[0];
+  const combinedInstructions = [settings.globalInstructions, activeProject?.instructions]
+    .map((s) => (s ?? "").trim())
+    .filter(Boolean)
+    .join("\n\n");
   const lastContent = active?.messages[active.messages.length - 1]?.content;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [active?.messages.length, loading, lastContent]);
 
-  function newChat() {
-    const c = { id: uid(), title: "New chat", messages: [] };
+  function newChat(projectId?: string) {
+    const pid = projectId ?? activeProject?.id ?? projects[0]?.id;
+    if (!pid) return;
+    const c = { id: uid(), title: "New chat", projectId: pid, messages: [] };
     setChats((prev) => [c, ...prev]);
     setActiveId(c.id);
+    setCollapsed((prev) => ({ ...prev, [pid]: false }));
   }
 
   function deleteChat(id: string) {
@@ -87,7 +141,8 @@ export default function Home() {
         if (next.length) {
           setActiveId(next[0].id);
         } else {
-          const c = { id: uid(), title: "New chat", messages: [] };
+          const pid = activeProject?.id ?? projects[0]?.id ?? uid();
+          const c = { id: uid(), title: "New chat", projectId: pid, messages: [] };
           setActiveId(c.id);
           return [c];
         }
@@ -105,11 +160,34 @@ export default function Home() {
     const id = editingId;
     if (!id) return;
     const title = editingTitle.trim();
-    setChats((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, title: title || c.title } : c))
-    );
+    setChats((prev) => prev.map((c) => (c.id === id ? { ...c, title: title || c.title } : c)));
     setEditingId(null);
     setEditingTitle("");
+  }
+
+  function newProject() {
+    setProjectModal({ project: { id: uid(), name: "", instructions: "" }, isNew: true });
+  }
+
+  function saveProject(p: Project, isNew: boolean) {
+    setProjects((prev) => (prev.some((x) => x.id === p.id) ? prev.map((x) => (x.id === p.id ? p : x)) : [...prev, p]));
+    if (isNew) {
+      const c = { id: uid(), title: "New chat", projectId: p.id, messages: [] };
+      setChats((prev) => [c, ...prev]);
+      setActiveId(c.id);
+    }
+  }
+
+  function deleteProject(id: string) {
+    if (projects.length <= 1) {
+      alert("You need at least one project.");
+      return;
+    }
+    if (!confirm("Delete this project? Its chats move to another project.")) return;
+    const remaining = projects.filter((p) => p.id !== id);
+    const fallback = remaining[0].id;
+    setProjects(remaining);
+    setChats((prev) => prev.map((c) => (c.projectId === id ? { ...c, projectId: fallback } : c)));
   }
 
   async function send() {
@@ -133,7 +211,6 @@ export default function Home() {
     setStreaming(false);
     setStatus(STATUSES[0]);
 
-    // Incrementally update the streaming assistant message in the active chat.
     let started = false;
     let acc = "";
     const upsert = (content: string, debug?: string) => {
@@ -161,6 +238,8 @@ export default function Home() {
           conversationId: activeId,
           history: active.messages,
           mode,
+          instructions: combinedInstructions,
+          connectors: settings.connectors,
         }),
       });
       if (!res.body) throw new Error("No response stream");
@@ -184,12 +263,7 @@ export default function Home() {
             stage?: string;
             text?: string;
             error?: string;
-            debug?: {
-              engines?: string;
-              retrieved?: number;
-              totalMs?: number;
-              sources?: string[];
-            };
+            debug?: { engines?: string; retrieved?: number; totalMs?: number; sources?: string[] };
           };
           try {
             evt = JSON.parse(t);
@@ -233,76 +307,128 @@ export default function Home() {
     }
   }
 
+  function chatRow(c: Chat) {
+    return (
+      <div
+        key={c.id}
+        className={`group flex items-center rounded-md transition-colors ${
+          c.id === activeId ? "bg-[#16263a]" : "hover:bg-[#111c29]"
+        }`}
+      >
+        {editingId === c.id ? (
+          <input
+            autoFocus
+            value={editingTitle}
+            onChange={(e) => setEditingTitle(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitRename();
+              if (e.key === "Escape") {
+                setEditingId(null);
+                setEditingTitle("");
+              }
+            }}
+            placeholder="Chat name"
+            className="flex-1 min-w-0 bg-transparent px-3 py-2 text-sm outline-none border border-[#2b6fb3] rounded-md"
+          />
+        ) : (
+          <button
+            onClick={() => setActiveId(c.id)}
+            onDoubleClick={() => startRename(c.id, c.title)}
+            title="Double-click to rename"
+            className="flex-1 min-w-0 truncate px-3 py-2 text-sm text-left"
+          >
+            {c.title || "New chat"}
+          </button>
+        )}
+        {editingId !== c.id && (
+          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity pr-1">
+            <button onClick={() => startRename(c.id, c.title)} title="Rename" className="rounded p-1 text-[#6b7d94] hover:text-[#cdd9e8]">
+              ✎
+            </button>
+            <button
+              onClick={() => {
+                if (confirm(`Delete chat "${c.title || "New chat"}"?`)) deleteChat(c.id);
+              }}
+              title="Delete"
+              className="rounded p-1 text-[#6b7d94] hover:text-[#e2728a]"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <aside className="hidden md:flex w-64 flex-col bg-[#0a1018] border-r border-[#1c2838]">
-        <div className="p-3">
+        <div className="p-3 space-y-2">
           <button
-            onClick={newChat}
+            onClick={() => newChat()}
             className="w-full rounded-lg border border-[#2a3a52] px-3 py-2 text-sm text-left hover:bg-[#13202f] transition-colors"
           >
             + New chat
           </button>
+          <button
+            onClick={newProject}
+            className="w-full rounded-lg px-3 py-1.5 text-xs text-left text-[#8aa0bb] hover:bg-[#13202f] transition-colors"
+          >
+            + New project
+          </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-2 space-y-1">
-          {chats.map((c) => (
-            <div
-              key={c.id}
-              className={`group flex items-center rounded-md transition-colors ${
-                c.id === activeId ? "bg-[#16263a]" : "hover:bg-[#111c29]"
-              }`}
-            >
-              {editingId === c.id ? (
-                <input
-                  autoFocus
-                  value={editingTitle}
-                  onChange={(e) => setEditingTitle(e.target.value)}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") commitRename();
-                    if (e.key === "Escape") {
-                      setEditingId(null);
-                      setEditingTitle("");
-                    }
-                  }}
-                  placeholder="Chat name"
-                  className="flex-1 min-w-0 bg-transparent px-3 py-2 text-sm outline-none border border-[#2b6fb3] rounded-md"
-                />
-              ) : (
-                <button
-                  onClick={() => setActiveId(c.id)}
-                  onDoubleClick={() => startRename(c.id, c.title)}
-                  title="Double-click to rename"
-                  className="flex-1 min-w-0 truncate px-3 py-2 text-sm text-left"
-                >
-                  {c.title || "New chat"}
-                </button>
-              )}
-              {editingId !== c.id && (
-                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity pr-1">
+
+        <div className="flex-1 overflow-y-auto px-2 space-y-2">
+          {projects.map((p) => {
+            const pchats = chats.filter((c) => c.projectId === p.id);
+            const isCollapsed = collapsed[p.id];
+            return (
+              <div key={p.id}>
+                <div className="group flex items-center rounded-md px-1 hover:bg-[#0d1622]">
                   <button
-                    onClick={() => startRename(c.id, c.title)}
-                    title="Rename"
-                    className="rounded p-1 text-[#6b7d94] hover:text-[#cdd9e8]"
+                    onClick={() => setCollapsed((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
+                    className="flex-1 min-w-0 flex items-center gap-1 px-1 py-1.5 text-left"
                   >
-                    ✎
+                    <span className="text-[#5b6b80] text-[10px] w-3">{isCollapsed ? "▸" : "▾"}</span>
+                    <span className="truncate text-xs font-semibold uppercase tracking-wide text-[#7a8da3]">
+                      {p.name}
+                    </span>
+                    <span className="text-[10px] text-[#4a5a70]">{pchats.length}</span>
                   </button>
-                  <button
-                    onClick={() => {
-                      if (confirm(`Delete chat "${c.title || "New chat"}"?`)) deleteChat(c.id);
-                    }}
-                    title="Delete"
-                    className="rounded p-1 text-[#6b7d94] hover:text-[#e2728a]"
-                  >
-                    ✕
-                  </button>
+                  <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => newChat(p.id)} title="New chat in project" className="rounded p-1 text-[#6b7d94] hover:text-[#cdd9e8]">
+                      ＋
+                    </button>
+                    <button onClick={() => setProjectModal({ project: p, isNew: false })} title="Project settings" className="rounded p-1 text-[#6b7d94] hover:text-[#cdd9e8]">
+                      ✎
+                    </button>
+                    <button onClick={() => deleteProject(p.id)} title="Delete project" className="rounded p-1 text-[#6b7d94] hover:text-[#e2728a]">
+                      ✕
+                    </button>
+                  </div>
                 </div>
-              )}
-            </div>
-          ))}
+                {!isCollapsed && (
+                  <div className="space-y-1 pl-2 mt-1">
+                    {pchats.length === 0 && (
+                      <div className="px-3 py-1 text-xs text-[#4a5a70]">No chats yet</div>
+                    )}
+                    {pchats.map((c) => chatRow(c))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-        <div className="p-3 text-xs text-[#5b6b80] border-t border-[#1c2838]">
-          IntelBot · Noonan
+
+        <div className="p-3 border-t border-[#1c2838] flex items-center justify-between">
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="rounded-md px-2 py-1 text-xs text-[#8aa0bb] hover:bg-[#13202f] hover:text-[#cdd9e8] transition-colors"
+          >
+            ⚙ Settings &amp; Connectors
+          </button>
+          <span className="text-xs text-[#5b6b80]">Noonan</span>
         </div>
       </aside>
 
@@ -310,7 +436,7 @@ export default function Home() {
         <header className="px-4 py-3 border-b border-[#1c2838] flex items-center gap-2">
           <span className="font-semibold">IntelBot</span>
           <span className="hidden sm:inline text-xs text-[#5b6b80] truncate">
-            Noonan · grounded in your knowledge base
+            {activeProject ? activeProject.name : "Noonan"} · grounded in your knowledge base
           </span>
           <div className="ml-auto flex items-center rounded-lg border border-[#243449] p-0.5 text-xs">
             <button
@@ -338,24 +464,14 @@ export default function Home() {
           <div className="max-w-3xl mx-auto w-full px-4 py-6 space-y-6">
             {active && active.messages.length === 0 && !loading && (
               <div className="text-center text-[#5b6b80] mt-20">
-                <div className="text-2xl font-semibold text-[#cdd9e8]">
-                  How can I help?
-                </div>
+                <div className="text-2xl font-semibold text-[#cdd9e8]">How can I help?</div>
                 <div className="mt-2 text-sm">
-                  Ask about ASX, markets, NSW property, or anything in Noonan&apos;s
-                  knowledge base.
+                  Ask about NSW property, tenancy law, or anything in Noonan&apos;s knowledge base.
                 </div>
               </div>
             )}
             {active?.messages.map((m, i) => (
-              <div
-                key={i}
-                className={
-                  m.role === "user"
-                    ? "flex justify-end"
-                    : "flex flex-col items-start"
-                }
-              >
+              <div key={i} className={m.role === "user" ? "flex justify-end" : "flex flex-col items-start"}>
                 <div
                   data-msg-id={m.id}
                   className={`rounded-2xl px-4 py-3 leading-relaxed text-[15px] ${
@@ -393,9 +509,7 @@ export default function Home() {
                             <button
                               className={EXPORT_BTN}
                               onClick={() => {
-                                const el = m.id
-                                  ? document.querySelector(`[data-msg-id="${m.id}"]`)
-                                  : null;
+                                const el = m.id ? document.querySelector(`[data-msg-id="${m.id}"]`) : null;
                                 if (el) printAnswer(el.innerHTML, title, q);
                               }}
                             >
@@ -444,11 +558,22 @@ export default function Home() {
             </button>
           </div>
           <div className="max-w-3xl mx-auto text-center text-[10px] text-[#5b6b80] mt-2">
-            Deep answers take 2–5 min. Guidance based on NSW/Australian frameworks —
-            not legal advice.
+            Deep answers take 2–5 min. Guidance based on NSW/Australian frameworks — not legal advice.
           </div>
         </div>
       </main>
+
+      {settingsOpen && (
+        <SettingsModal settings={settings} onSave={setSettings} onClose={() => setSettingsOpen(false)} />
+      )}
+      {projectModal && (
+        <ProjectModal
+          project={projectModal.project}
+          isNew={projectModal.isNew}
+          onSave={(p) => saveProject(p, projectModal.isNew)}
+          onClose={() => setProjectModal(null)}
+        />
+      )}
     </div>
   );
 }
