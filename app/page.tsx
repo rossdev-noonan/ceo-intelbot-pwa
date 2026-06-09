@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Markdown from "@/components/Markdown";
 
 type Role = "user" | "assistant";
 type Msg = { role: Role; content: string; ts: number; debug?: string };
@@ -213,13 +214,13 @@ export default function Home() {
                 }
               >
                 <div
-                  className={`rounded-2xl px-4 py-3 whitespace-pre-wrap leading-relaxed text-[15px] ${
+                  className={`rounded-2xl px-4 py-3 leading-relaxed text-[15px] ${
                     m.role === "user"
-                      ? "bg-[#1e3a5f] max-w-[80%]"
+                      ? "bg-[#1e3a5f] max-w-[80%] whitespace-pre-wrap"
                       : "bg-[#0f1825] border border-[#1c2838] max-w-[90%]"
                   }`}
                 >
-                  {m.content}
+                  {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
                 </div>
                 {m.debug && (
                   <div className="mt-1 max-w-[90%] rounded-md bg-[#0b121c] border border-[#1c2838] px-3 py-2 text-[10px] font-mono text-[#7a8da3] whitespace-pre-wrap break-all">
