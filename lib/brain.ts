@@ -6,7 +6,7 @@ import {
   callPerplexity,
   type ModelResult,
 } from "@/lib/models";
-import { ANALYST_SYSTEM, RESEARCH_SYSTEM, SYNTH_SYSTEM } from "@/lib/prompts";
+import { ANALYST_SYSTEM, RESEARCH_SYSTEM, SYNTH_SYSTEM, withInstructions } from "@/lib/prompts";
 
 export type BrainResult = {
   answer: string;
@@ -15,6 +15,11 @@ export type BrainResult = {
   retrievedCount: number;
   ms: number;
 };
+
+// Connector configuration + custom instructions, sent per-request from the UI.
+export type Connectors = { web: boolean; fetch: boolean; vaultDepth: number };
+export const DEFAULT_CONNECTORS: Connectors = { web: true, fetch: true, vaultDepth: 8 };
+export type BrainOptions = { instructions?: string; connectors?: Connectors };
 
 type Turn = { role: string; content: string };
 
@@ -31,9 +36,9 @@ type Source = { n: number; file: string; heading: string; score: number };
 
 // Shared prep: retrieve from the vault and build the prompts for both the
 // blocking and streaming pipelines.
-async function prepare(question: string, history?: Turn[]) {
+async function prepare(question: string, history?: Turn[], depth = 8) {
   await ensureIndex();
-  const hits: Hit[] = searchVault(question, 8);
+  const hits: Hit[] = searchVault(question, depth);
   const { context } = buildContext(hits);
   const sources: Source[] = hits.map((h, i) => ({
     n: i + 1,
@@ -50,14 +55,22 @@ async function prepare(question: string, history?: Turn[]) {
   return { hits, sources, kb, analystUser, researchUser };
 }
 
-// Fan out to the three models in parallel; each fails soft.
-async function fanOut(analystUser: string, researchUser: string) {
-  const [gpt, claude, pplx] = await Promise.all([
-    callOpenAI(ANALYST_SYSTEM, analystUser),
-    callAnthropic(ANALYST_SYSTEM, analystUser),
-    callPerplexity(RESEARCH_SYSTEM, researchUser),
-  ]);
-  return [gpt, claude, pplx] as ModelResult[];
+// Fan out to the models in parallel; each fails soft. Perplexity (the web
+// connector) is skipped when web search is disabled.
+async function fanOut(
+  analystUser: string,
+  researchUser: string,
+  opts: BrainOptions
+): Promise<ModelResult[]> {
+  const analyst = withInstructions(ANALYST_SYSTEM, opts.instructions);
+  const research = withInstructions(RESEARCH_SYSTEM, opts.instructions);
+  const web = opts.connectors?.web ?? true;
+  const calls = [
+    callOpenAI(analyst, analystUser),
+    callAnthropic(analyst, analystUser),
+    ...(web ? [callPerplexity(research, researchUser)] : []),
+  ];
+  return Promise.all(calls);
 }
 
 function buildSynthUser(kb: string, ok: ModelResult[], question: string): string {
@@ -75,11 +88,19 @@ function buildSynthUser(kb: string, ok: ModelResult[], question: string): string
 }
 
 // The full Teams-parity pipeline (blocking): retrieve -> fan out -> synthesise.
-export async function answer(question: string, history?: Turn[]): Promise<BrainResult> {
+export async function answer(
+  question: string,
+  history?: Turn[],
+  opts: BrainOptions = {}
+): Promise<BrainResult> {
   const start = Date.now();
-  const { hits, sources, kb, analystUser, researchUser } = await prepare(question, history);
+  const { hits, sources, kb, analystUser, researchUser } = await prepare(
+    question,
+    history,
+    opts.connectors?.vaultDepth
+  );
 
-  const all = await fanOut(analystUser, researchUser);
+  const all = await fanOut(analystUser, researchUser, opts);
   const ok = all.filter((m) => m.ok && m.text);
   const modelStatus = all.map((m) => ({ name: m.name, ok: m.ok, ms: m.ms, error: m.error }));
 
@@ -95,10 +116,11 @@ export async function answer(question: string, history?: Turn[]): Promise<BrainR
     };
   }
 
-  const synth = await callAnthropic(SYNTH_SYSTEM, buildSynthUser(kb, ok, question), {
-    maxTokens: 4096,
-    name: "Synthesiser",
-  });
+  const synth = await callAnthropic(
+    withInstructions(SYNTH_SYSTEM, opts.instructions),
+    buildSynthUser(kb, ok, question),
+    { maxTokens: 4096, name: "Synthesiser" }
+  );
   modelStatus.push({ name: synth.name, ok: synth.ok, ms: synth.ms, error: synth.error });
   const finalAnswer = synth.ok && synth.text ? synth.text : ok[0].text;
 
@@ -130,16 +152,21 @@ export type BrainDebug = {
 // token-by-token. Status events drive the UI between phases.
 export async function* answerStream(
   question: string,
-  history?: Turn[]
+  history?: Turn[],
+  opts: BrainOptions = {}
 ): AsyncGenerator<StreamEvent> {
   const start = Date.now();
 
   yield { type: "status", stage: "Searching the knowledge base…" };
-  const { hits, sources, kb, analystUser, researchUser } = await prepare(question, history);
+  const { hits, sources, kb, analystUser, researchUser } = await prepare(
+    question,
+    history,
+    opts.connectors?.vaultDepth
+  );
   yield { type: "sources", sources };
 
   yield { type: "status", stage: "Consulting the analysis engines…" };
-  const all = await fanOut(analystUser, researchUser);
+  const all = await fanOut(analystUser, researchUser, opts);
   const ok = all.filter((m) => m.ok && m.text);
   const modelStatus = all.map((m) => ({ name: m.name, ok: m.ok, ms: m.ms, error: m.error }));
 
@@ -162,9 +189,11 @@ export async function* answerStream(
   }
 
   yield { type: "status", stage: "Synthesising the answer…" };
-  const gen = callAnthropicStream(SYNTH_SYSTEM, buildSynthUser(kb, ok, question), {
-    maxTokens: 4096,
-  });
+  const gen = callAnthropicStream(
+    withInstructions(SYNTH_SYSTEM, opts.instructions),
+    buildSynthUser(kb, ok, question),
+    { maxTokens: 4096 }
+  );
   let acc = "";
   let result: { ok: boolean; error?: string } = { ok: true };
   while (true) {

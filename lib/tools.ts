@@ -45,6 +45,16 @@ export const TOOLS = [
   },
 ];
 
+// Filter the tool list by enabled connectors. Vault tools are always on; the
+// web search and fetch connectors can be turned off in the Connectors panel.
+export function toolsFor(connectors?: { web?: boolean; fetch?: boolean }) {
+  return TOOLS.filter((t) => {
+    if (t.name === "web_search") return connectors?.web ?? true;
+    if (t.name === "fetch_url") return connectors?.fetch ?? true;
+    return true;
+  });
+}
+
 type ToolInput = Record<string, unknown>;
 
 // Short human-readable label for a tool call, shown as a status line in the UI.

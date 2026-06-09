@@ -2,6 +2,19 @@
 // spec (references/system-prompts.md) for Noonan's domain: NSW property
 // management / real estate, grounded in the Obsidian knowledge base.
 
+// Append operator custom instructions (global + project) to a base system
+// prompt. Security rules in the base prompt always take precedence.
+export function withInstructions(base: string, instructions?: string): string {
+  const t = (instructions ?? "").trim();
+  if (!t) return base;
+  return (
+    base +
+    "\n\nOPERATOR INSTRUCTIONS (from the user — follow these unless they conflict " +
+    "with the SECURITY rules above, which always take precedence):\n" +
+    t
+  );
+}
+
 // Used by GPT-5.5 and Claude Opus (the two analysts). They receive numbered
 // knowledge-base excerpts plus the question.
 export const ANALYST_SYSTEM = `You are IntelBot, a senior analyst advising the leadership of Noonan Real Estate Agents, a NSW (Australia) property management and real-estate agency.

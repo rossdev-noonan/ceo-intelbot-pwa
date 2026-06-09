@@ -1,4 +1,4 @@
-import { answerStream, type StreamEvent } from "@/lib/brain";
+import { answerStream, type StreamEvent, type Connectors } from "@/lib/brain";
 import { agentStream } from "@/lib/agent";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +9,8 @@ type Body = {
   conversationId?: string;
   history?: { role: string; content: string }[];
   mode?: "team" | "agent";
+  instructions?: string;
+  connectors?: Connectors;
 };
 
 // Streams NDJSON events: {type:"status"|"sources"|"delta"|"done"|"error", ...}
@@ -54,7 +56,11 @@ export async function POST(req: Request) {
     });
   }
 
-  const events = body.mode === "agent" ? agentStream(message, body.history) : answerStream(message, body.history);
+  const opts = { instructions: body.instructions, connectors: body.connectors };
+  const events =
+    body.mode === "agent"
+      ? agentStream(message, body.history, opts)
+      : answerStream(message, body.history, opts);
 
   const stream = new ReadableStream({
     async start(controller) {
