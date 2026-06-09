@@ -38,6 +38,8 @@ export default function Home() {
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState(STATUSES[0]);
   const [mode, setMode] = useState<"team" | "agent">("team");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -76,6 +78,38 @@ export default function Home() {
     const c = { id: uid(), title: "New chat", messages: [] };
     setChats((prev) => [c, ...prev]);
     setActiveId(c.id);
+  }
+
+  function deleteChat(id: string) {
+    setChats((prev) => {
+      const next = prev.filter((c) => c.id !== id);
+      if (id === activeId) {
+        if (next.length) {
+          setActiveId(next[0].id);
+        } else {
+          const c = { id: uid(), title: "New chat", messages: [] };
+          setActiveId(c.id);
+          return [c];
+        }
+      }
+      return next;
+    });
+  }
+
+  function startRename(id: string, current: string) {
+    setEditingId(id);
+    setEditingTitle(current === "New chat" ? "" : current);
+  }
+
+  function commitRename() {
+    const id = editingId;
+    if (!id) return;
+    const title = editingTitle.trim();
+    setChats((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, title: title || c.title } : c))
+    );
+    setEditingId(null);
+    setEditingTitle("");
   }
 
   async function send() {
@@ -212,15 +246,59 @@ export default function Home() {
         </div>
         <div className="flex-1 overflow-y-auto px-2 space-y-1">
           {chats.map((c) => (
-            <button
+            <div
               key={c.id}
-              onClick={() => setActiveId(c.id)}
-              className={`w-full truncate rounded-md px-3 py-2 text-sm text-left transition-colors ${
+              className={`group flex items-center rounded-md transition-colors ${
                 c.id === activeId ? "bg-[#16263a]" : "hover:bg-[#111c29]"
               }`}
             >
-              {c.title || "New chat"}
-            </button>
+              {editingId === c.id ? (
+                <input
+                  autoFocus
+                  value={editingTitle}
+                  onChange={(e) => setEditingTitle(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitRename();
+                    if (e.key === "Escape") {
+                      setEditingId(null);
+                      setEditingTitle("");
+                    }
+                  }}
+                  placeholder="Chat name"
+                  className="flex-1 min-w-0 bg-transparent px-3 py-2 text-sm outline-none border border-[#2b6fb3] rounded-md"
+                />
+              ) : (
+                <button
+                  onClick={() => setActiveId(c.id)}
+                  onDoubleClick={() => startRename(c.id, c.title)}
+                  title="Double-click to rename"
+                  className="flex-1 min-w-0 truncate px-3 py-2 text-sm text-left"
+                >
+                  {c.title || "New chat"}
+                </button>
+              )}
+              {editingId !== c.id && (
+                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity pr-1">
+                  <button
+                    onClick={() => startRename(c.id, c.title)}
+                    title="Rename"
+                    className="rounded p-1 text-[#6b7d94] hover:text-[#cdd9e8]"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm(`Delete chat "${c.title || "New chat"}"?`)) deleteChat(c.id);
+                    }}
+                    title="Delete"
+                    className="rounded p-1 text-[#6b7d94] hover:text-[#e2728a]"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
         </div>
         <div className="p-3 text-xs text-[#5b6b80] border-t border-[#1c2838]">
