@@ -28,28 +28,23 @@ info only**, because every question transits OpenAI/Anthropic/Perplexity, and a
 `sensitivity_check` node refuses MNPI / client-confidential / PII **before** any
 LLM call.
 
-**The PWA currently has no equivalent gate.** It retrieves from Mike's internal
-Obsidian vault (operational procedures, NSW legal notes, scenario playbooks) and
-sends that content to the same three external LLMs. The vault appears to be
-internal *knowledge* (processes + legislation), not live client records — but:
+**Decision (2026-06-10): "gate now, audit later."**
 
-- There is no sensitivity/data-boundary gate refusing PII/MNPI inputs.
-- There is no audit log of questions/answers.
-- Vault excerpts (which could include client-identifiable scenarios) leave to
-  third-party LLMs by design.
+- ✅ **Sensitivity gate IMPLEMENTED** (`lib/sensitivity.ts`, wired in
+  `app/api/chat/route.ts`). A pre-LLM, high-precision check refuses inputs
+  containing card numbers (Luhn), personal/financial identifiers (TFN, Medicare,
+  passport, licence, BSB/account, CVV), dates of birth, and MNPI markers —
+  BEFORE any model is called. It targets *identifiers*, not sensitive *topics*:
+  questions about DV lease exits, arrears, child-safety procedures still work.
+- ⏳ **Audit log DEFERRED** — no persistent Q&A audit trail yet (Teams uses
+  Purview). To add later if required.
+- ✅ **Prompt-injection defence** already present (question + retrieved content +
+  tool output all treated as untrusted data in the system prompts).
 
-This is acceptable IF the intent is "internal knowledge assistant for Mike over
-non-client-PII content." It is **not** aligned with the Teams public-only
-boundary. Decide one of:
-
-1. **Accept** the PWA as an internal-knowledge tool (document the boundary: no
-   raw client PII in the vault).
-2. **Port the sensitivity gate** into the PWA (a pre-LLM check that refuses
-   PII/MNPI), matching the spec's posture.
-3. **Add audit logging** of Q&A for the PWA to mirror the Teams audit trail.
-
-Prompt-injection defence IS already present in the PWA (question + retrieved
-content + tool output are all treated as untrusted data in the system prompts).
+Remaining residual vs the Teams public-only boundary: vault excerpts (internal
+knowledge — procedures + legislation) still go to third-party LLMs by design,
+which is the intended behaviour for an internal knowledge assistant. Keep raw
+client records out of the vault.
 
 ## Phase 15 (uRent API) overlap
 

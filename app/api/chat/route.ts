@@ -1,5 +1,6 @@
 import { answerStream, type StreamEvent, type Connectors } from "@/lib/brain";
 import { agentStream } from "@/lib/agent";
+import { checkSensitivity, sensitivityRefusal } from "@/lib/sensitivity";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // deep answers can take minutes
@@ -24,10 +25,30 @@ export async function POST(req: Request) {
   const isDev = process.env.NODE_ENV !== "production";
   const encoder = new TextEncoder();
 
+  const ndjsonHeaders = {
+    "content-type": "application/x-ndjson; charset=utf-8",
+    "cache-control": "no-store",
+  };
+
   const single = (evt: StreamEvent) =>
-    new Response(encoder.encode(JSON.stringify(evt) + "\n"), {
-      headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },
-    });
+    new Response(encoder.encode(JSON.stringify(evt) + "\n"), { headers: ndjsonHeaders });
+
+  // Stream a fixed reply as a delta + done (used for preview and the gate).
+  const streamReply = (reply: string, engines: string) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(JSON.stringify({ type: "delta", text: reply }) + "\n"));
+          controller.enqueue(
+            encoder.encode(
+              JSON.stringify({ type: "done", answer: reply, debug: { engines, retrieved: 0, sources: [], totalMs: 0 } }) + "\n"
+            )
+          );
+          controller.close();
+        },
+      }),
+      { headers: ndjsonHeaders }
+    );
 
   if (!message) {
     return single({ type: "error", error: "Please enter a question." });
@@ -35,25 +56,20 @@ export async function POST(req: Request) {
 
   // Preview mode — no model key configured.
   if (!process.env.ANTHROPIC_API_KEY) {
-    const reply =
+    return streamReply(
       "⚙️ Preview mode — no model key configured.\n\n" +
-      "Add ANTHROPIC_API_KEY (and optionally OPENAI_API_KEY, PERPLEXITY_API_KEY) " +
-      "to .env.local to enable grounded answers from your Obsidian knowledge base.\n\n" +
-      `You asked:\n“${message}”`;
-    const stream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(encoder.encode(JSON.stringify({ type: "delta", text: reply }) + "\n"));
-        controller.enqueue(
-          encoder.encode(
-            JSON.stringify({ type: "done", answer: reply, debug: { engines: "preview", retrieved: 0, sources: [], totalMs: 0 } }) + "\n"
-          )
-        );
-        controller.close();
-      },
-    });
-    return new Response(stream, {
-      headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },
-    });
+        "Add ANTHROPIC_API_KEY (and optionally OPENAI_API_KEY, PERPLEXITY_API_KEY) " +
+        "to .env.local to enable grounded answers from your Obsidian knowledge base.\n\n" +
+        `You asked:\n“${message}”`,
+      "preview"
+    );
+  }
+
+  // Data-boundary gate (spec C1) — refuse PII / financial identifiers / MNPI
+  // BEFORE any model is called.
+  const sens = checkSensitivity(message);
+  if (sens.blocked) {
+    return streamReply(sensitivityRefusal(sens.categories), `blocked: sensitivity gate (${sens.categories.join(", ")})`);
   }
 
   const opts = { instructions: body.instructions, connectors: body.connectors };
