@@ -1,4 +1,5 @@
 import { answerStream, type StreamEvent } from "@/lib/brain";
+import { agentStream } from "@/lib/agent";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // deep answers can take minutes
@@ -7,6 +8,7 @@ type Body = {
   message?: string;
   conversationId?: string;
   history?: { role: string; content: string }[];
+  mode?: "team" | "agent";
 };
 
 // Streams NDJSON events: {type:"status"|"sources"|"delta"|"done"|"error", ...}
@@ -52,11 +54,13 @@ export async function POST(req: Request) {
     });
   }
 
+  const events = body.mode === "agent" ? agentStream(message, body.history) : answerStream(message, body.history);
+
   const stream = new ReadableStream({
     async start(controller) {
       const send = (obj: unknown) => controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
       try {
-        for await (const evt of answerStream(message, body.history)) {
+        for await (const evt of events) {
           // Strip the debug payload in production.
           if (evt.type === "done" && !isDev) send({ type: "done", answer: evt.answer });
           else send(evt);

@@ -37,6 +37,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState(STATUSES[0]);
+  const [mode, setMode] = useState<"team" | "agent">("team");
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -125,6 +126,7 @@ export default function Home() {
           message: text,
           conversationId: activeId,
           history: active.messages,
+          mode,
         }),
       });
       if (!res.body) throw new Error("No response stream");
@@ -229,9 +231,29 @@ export default function Home() {
       <main className="flex-1 flex flex-col min-w-0">
         <header className="px-4 py-3 border-b border-[#1c2838] flex items-center gap-2">
           <span className="font-semibold">IntelBot</span>
-          <span className="text-xs text-[#5b6b80] truncate">
+          <span className="hidden sm:inline text-xs text-[#5b6b80] truncate">
             Noonan · grounded in your knowledge base
           </span>
+          <div className="ml-auto flex items-center rounded-lg border border-[#243449] p-0.5 text-xs">
+            <button
+              onClick={() => setMode("team")}
+              title="Three models (GPT-5.5 + Claude + Perplexity) fan out and a synthesiser merges them."
+              className={`rounded-md px-2.5 py-1 transition-colors ${
+                mode === "team" ? "bg-[#1e3a5f] text-white" : "text-[#8aa0bb] hover:text-[#cdd9e8]"
+              }`}
+            >
+              Team
+            </button>
+            <button
+              onClick={() => setMode("agent")}
+              title="Agent uses tools (vault search, web search, fetch pages) to research before answering."
+              className={`rounded-md px-2.5 py-1 transition-colors ${
+                mode === "agent" ? "bg-[#1e3a5f] text-white" : "text-[#8aa0bb] hover:text-[#cdd9e8]"
+              }`}
+            >
+              Agent
+            </button>
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto">

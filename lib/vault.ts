@@ -318,6 +318,13 @@ export async function getVaultStats() {
   };
 }
 
+// Unique list of indexed files (relative paths). For the agent's overview tool.
+export function listFiles(): string[] {
+  const idx = cached;
+  if (!idx) return [];
+  return Array.from(new Set(idx.chunks.map((c) => c.file))).sort();
+}
+
 // Authoritative source notes should outrank the bot's own past exports and
 // rough drafts. Folder-based multipliers applied on top of the BM25 score.
 function folderWeight(file: string): number {
