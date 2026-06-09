@@ -2,9 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import Markdown from "@/components/Markdown";
+import {
+  downloadMarkdown,
+  downloadCsv,
+  markdownTablesToCsv,
+  printAnswer,
+} from "@/lib/export";
 
 type Role = "user" | "assistant";
-type Msg = { role: Role; content: string; ts: number; debug?: string };
+type Msg = { role: Role; content: string; ts: number; debug?: string; id?: string };
 type Chat = { id: string; title: string; messages: Msg[] };
 
 const LS_KEY = "intelbot_chats_v1";
@@ -18,6 +24,11 @@ const STATUSES = [
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
+
+const EXPORT_BTN =
+  "rounded-md border border-[#243449] px-2 py-1 text-[#8aa0bb] hover:bg-[#13202f] hover:text-[#cdd9e8] transition-colors";
+const EXPORT_BTN_OFF =
+  "rounded-md border border-[#1c2838] px-2 py-1 text-[#42536b] cursor-not-allowed";
 
 export default function Home() {
   const [chats, setChats] = useState<Chat[]>([]);
@@ -70,7 +81,8 @@ export default function Home() {
     const text = input.trim();
     if (!text || loading || !active) return;
     setInput("");
-    const userMsg: Msg = { role: "user", content: text, ts: Date.now() };
+    const userMsg: Msg = { role: "user", content: text, ts: Date.now(), id: uid() };
+    const assistantId = uid();
     setChats((prev) =>
       prev.map((c) =>
         c.id === activeId
@@ -97,7 +109,7 @@ export default function Home() {
           if (started) {
             msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content, debug };
           } else {
-            msgs.push({ role: "assistant", content, ts: Date.now(), debug });
+            msgs.push({ role: "assistant", content, ts: Date.now(), debug, id: assistantId });
           }
           return { ...c, messages: msgs };
         })
@@ -245,6 +257,7 @@ export default function Home() {
                 }
               >
                 <div
+                  data-msg-id={m.id}
                   className={`rounded-2xl px-4 py-3 leading-relaxed text-[15px] ${
                     m.role === "user"
                       ? "bg-[#1e3a5f] max-w-[80%] whitespace-pre-wrap"
@@ -253,6 +266,46 @@ export default function Home() {
                 >
                   {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
                 </div>
+                {m.role === "assistant" &&
+                  m.content &&
+                  !(loading && i === (active?.messages.length ?? 0) - 1) && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5 text-xs">
+                      {(() => {
+                        const q = active?.messages[i - 1]?.content;
+                        const title = (q || active?.title || "intelbot-answer").slice(0, 60);
+                        const hasTables = markdownTablesToCsv(m.content) !== null;
+                        return (
+                          <>
+                            <button className={EXPORT_BTN} onClick={() => navigator.clipboard?.writeText(m.content)}>
+                              Copy
+                            </button>
+                            <button className={EXPORT_BTN} onClick={() => downloadMarkdown(m.content, title)}>
+                              ⬇ Markdown
+                            </button>
+                            <button
+                              className={hasTables ? EXPORT_BTN : EXPORT_BTN_OFF}
+                              disabled={!hasTables}
+                              title={hasTables ? "Export tables as CSV" : "No tables in this answer"}
+                              onClick={() => downloadCsv(m.content, title)}
+                            >
+                              ⬇ CSV
+                            </button>
+                            <button
+                              className={EXPORT_BTN}
+                              onClick={() => {
+                                const el = m.id
+                                  ? document.querySelector(`[data-msg-id="${m.id}"]`)
+                                  : null;
+                                if (el) printAnswer(el.innerHTML, title, q);
+                              }}
+                            >
+                              ⬇ PDF
+                            </button>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
                 {m.debug && (
                   <div className="mt-1 max-w-[90%] rounded-md bg-[#0b121c] border border-[#1c2838] px-3 py-2 text-[10px] font-mono text-[#7a8da3] whitespace-pre-wrap break-all">
                     {m.debug}
