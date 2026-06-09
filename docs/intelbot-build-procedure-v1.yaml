@@ -1,0 +1,521 @@
+# =====================================================================
+# INTELBOT BUILD PROCEDURE
+# Procedural playbook — aligned from the generic "AI Assistant App"
+# template to the actual IntelBot project.
+#
+# Procedure version: 1.0
+# Aligned to:        intelbot-build-spec-v2_1.yaml (THE SOURCE OF TRUTH)
+# Last updated:      2026-06-10
+# Owner (builder):   Rossrival — exits as admin at handover
+# End user:          Mike — sole owner post-handover
+#
+# WHAT THIS IS / IS NOT:
+#   This is a project playbook in the shape of the generic template Ross
+#   supplied. It is NOT a replacement for the v2.1 build spec. Where the
+#   two ever disagree, the SPEC wins. Numbers, node lists, model strings,
+#   and security rules are summarised here and authoritative in the spec.
+#
+# ALIGNMENT MAP (generic template -> IntelBot reality):
+#   ~ "multi-user web SaaS"        -> single private Teams channel, one user (Mike)
+#   ~ sidebar/library/projects/    -> NOT APPLICABLE. IntelBot has no web UI,
+#     recents/profile-menu/pages      no file library, no projects. Dropped, not ported.
+#   ~ frontend stack (Next/React)  -> NONE. The "frontend" is the Teams channel itself.
+#   ~ backend API framework        -> n8n workflows behind a Power Automate bridge
+#   ~ PostgreSQL core tables       -> n8n Data Tables (intelbot_conversations, security_event_table)
+#   ~ REST endpoints               -> n8n webhooks + two Power Automate flows
+#   ~ "AI layer" (gateway/RAG)     -> 3-model parallel fan-out + synthesiser (the real core)
+#   ~ auth (email/oauth/sessions)  -> M365 identity + HMAC/shared-secret on the bridge; no app login
+#   ~ "Apps / Skills" sections     -> NOT a user-facing marketplace; folded into the
+#                                       uRent API phase as department instruction profiles
+#   + NEW final phase 15           -> expose IntelBot as an authenticated API to uRent
+#                                       (PROPOSED — pending ratification into the spec)
+#
+# CHANGES FROM the supplied generic template:
+#   - Removed everything assuming a multi-tenant consumer web app.
+#   - Replaced architecture/schema/API/frontend phases with IntelBot's.
+#   - Preserved the template's discipline phases (security, testing,
+#     deployment, monitoring, release checklist) re-pointed at IntelBot.
+#   - Added phase 15 (uRent API) with explicit conflict flags.
+#
+# NOTE (PWA session): This document describes the TEAMS IntelBot. The
+# ceo-intelbot-pwa in this repo is a SEPARATE sibling product (a web PWA
+# grounded in Mike's Obsidian vault). It is stored here as the authoritative
+# reference for IntelBot's architecture and security posture. See
+# docs/PWA-vs-TEAMS-reconciliation.md for how the PWA relates to this.
+# =====================================================================
+
+intelbot_build_procedure:
+  name: IntelBot
+  version: "1.0"
+  aligned_to_spec: "2.1"
+  source_of_truth: references/intelbot-build-spec-v2_1.yaml
+  purpose: >
+    A private Microsoft Teams channel ("CEO Intelbot AI"), accessible only
+    by Mike, where he @mentions a bot to ask about ASX-listed companies,
+    equity firms, and Australian business planning. Each question fans out
+    to three frontier LLMs in parallel; a synthesiser merges them into one
+    cited answer; follow-ups work in-thread; answers export to PDF/CSV/XLSX.
+    Built by Ross, who then exits — Mike becomes sole owner of the channel,
+    the audit alerts, and the runbook.
+
+  legal_and_product_note:
+    instruction: >
+      Original product. Do not impersonate any third-party assistant, and
+      do not expose confidential executive content beyond its intended scope.
+    requirements:
+      - Own name (IntelBot), own avatar (blue three-node mark), own card styling.
+      - Never claim to be ChatGPT, Claude, Perplexity, or any provider product;
+        these are backends accessed under licensed API keys, not the brand.
+      - All model access via licensed provider APIs (OpenAI, Anthropic, Perplexity).
+      - Confidentiality + data-boundary brief delivered to Mike before go-live.
+
+  # -------------------------------------------------------------------
+  phases:
+
+    - phase: "01_discovery_and_scope"
+      objective: "Lock who it serves and what it does."
+      target_user:
+        primary: "Mike (CEO, Noonan Real Estate / uRent) — sole human user"
+        note: "Not multi-user. No public sign-up. No team seats."
+      core_use_cases:
+        - "Ask questions about ASX-listed companies and equity firms (public info)"
+        - "Australian business-planning analysis (situation -> options -> recommendation -> risks)"
+        - "Follow-up questions within the same Teams thread (24h memory)"
+        - "Export any answer's data as PDF / CSV / XLSX via follow-up text command"
+      platform:
+        only: "Microsoft Teams private channel"
+        explicitly_not: [web_app, ios, android, desktop_app]
+      mvp_scope:
+        include:
+          - private channel + bot identity
+          - Power Automate trigger + reply flows
+          - intelbot-answer workflow (3 LLMs + synthesiser)
+          - intelbot-export workflow
+          - intelbot-memory-purge workflow
+          - prompt-injection defence
+          - sensitivity / data-boundary gate
+          - Purview audit alerts APP-001..006
+          - admin-exit handover + runbook
+        defer:
+          - uRent API exposure (phase 15 — proposed)
+          - SharePoint write-back
+          - threaded conversation Path B
+          - file/attachment parsing on inbound
+
+    - phase: "02_interaction_architecture"
+      objective: "Define how Mike interacts — replaces the template's sidebar/nav."
+      surface: "The Teams channel IS the interface. No app chrome."
+      interactions:
+        invoke:
+          how: "@IntelBot <question>"
+          style: explicit_mention   # not ambient — never replies unmentioned
+        follow_up:
+          how: "reply in the same thread"
+          backed_by: "24h conversation memory keyed on teams_conversation_id"
+        export:
+          how: "reply 'export pdf' | 'export csv' | 'export xlsx' in thread"
+          why_text_not_buttons: >
+            Cards posted via Power Automate Workflows do NOT support
+            interactive callback buttons. Export is a follow-up text command,
+            routed by the sensitivity-check node to intelbot-export.
+      not_applicable_from_template:
+        - sidebar
+        - profile_menu
+        - library
+        - projects
+        - recents
+        - personalization_page
+        - settings_page
+        - help_center
+      note: >
+        All of the above exist in the generic template because it assumes a
+        consumer web app. IntelBot has none of them.
+
+    - phase: "03_system_architecture"
+      objective: "Define transport, orchestration, AI, storage, security."
+      transport:
+        model: power_automate_bridge   # Office 365 Connectors are RETIRED; do not use webhooks/Bot Framework
+        trigger_flow:
+          name: intelbot-trigger-flow
+          does: "Teams @mention -> HTTP POST to n8n /intelbot-trigger"
+          auth_to_n8n: shared_secret_header
+        reply_flow:
+          name: intelbot-reply-flow
+          does: "n8n -> posts adaptive card back into the channel"
+          url: "SECRET — n8n credentials only, never in workflow JSON"
+        rotation: "flow URLs + shared secret rotate every 60 days"
+      orchestration:
+        engine: "n8n (dedicated isolated workspace)"
+        workflows: [intelbot-answer, intelbot-export, intelbot-memory-purge]
+      ai_layer:
+        pattern: parallel_fan_out_then_synthesise
+        cost_policy: best_models_only   # verify strings are still current before build
+        models:
+          chatgpt:     { provider: OpenAI,     api_model: gpt-5.5-2026-04-23, reasoning_effort: high, role: broad_reasoning }
+          claude:      { provider: Anthropic,  api_model: claude-opus-4-8, role: deep_analysis }
+          perplexity:  { provider: Perplexity, api_model: sonar-reasoning-pro, role: live_research_and_citations }
+          synthesiser: { provider: Anthropic,  api_model: claude-opus-4-8, role: merge_cite_and_quarantine }
+      storage:
+        relational: "NONE (no Postgres). State lives in n8n Data Tables."
+        data_tables:
+          - intelbot_conversations   # 24h TTL, question stored hashed, synthesis in clear
+          - security_event_table     # tamper-evident, 365-day retention
+        object_storage: "Only transient export files behind a signed single-use URL (24h purge)"
+        vector_db: "NONE in this build. RAG over Mike's Obsidian vault is a separate workstream."
+      security_layers:
+        - encrypt_in_transit_https_only: true
+        - inbound_request_verification_hmac_or_shared_secret: true
+        - replay_window_seconds: 300
+        - rate_limit: { per_minute: 30, per_hour: 200 }
+        - prompt_injection_defence: every_llm_input_and_output
+        - sensitivity_data_boundary_gate: true
+        - audit_logging_purview: true
+        - secrets_in_vault_only_60d_rotation: true
+
+    - phase: "04_data_model"
+      objective: "Define stored state (replaces the template's SQL schema)."
+      store: n8n_data_tables
+      tables:
+        intelbot_conversations:
+          key: teams_conversation_id
+          fields:
+            - question_hash       # privacy: never store question in clear
+            - synthesis           # the only clear-text answer field
+            - message_id
+            - timestamp
+            - extractable_data
+          ttl_hours: 24
+          ttl_enforced_by: intelbot-memory-purge (hourly — tables do not auto-expire)
+        security_event_table:
+          fields:
+            - event_type
+            - timestamp
+            - conversation_id
+            - success_or_failure
+          retention_days: 365
+      note: >
+        The generic template's users/sessions/projects/files/embeddings/
+        skills/preferences tables do NOT exist. There is one human user and
+        no app accounts.
+
+    - phase: "05_interface_design"
+      objective: "Define the callable surfaces (replaces the template's REST API)."
+      n8n_webhooks:
+        - { path: /intelbot-trigger, method: POST, purpose: "receive Mike's question from the trigger flow", verify: shared_secret_or_hmac }
+        - { path: /intelbot-export,  method: POST, purpose: "receive export command", verify: shared_secret_and_conversation_id }
+      power_automate_flows:
+        - { name: intelbot-trigger-flow, direction: "Teams -> n8n" }
+        - { name: intelbot-reply-flow,   direction: "n8n -> Teams" }
+      no_public_rest_api_yet: >
+        Until phase 15, IntelBot has NO general-purpose public API. The only
+        ingress is the trigger flow's signed POST. Phase 15 proposes adding one.
+
+    - phase: "06_ai_answer_flow"
+      objective: "How a question becomes a cited answer (the real core)."
+      workflow: intelbot-answer
+      node_sequence:
+        - 1_webhook_trigger        # immediate 200 ack; answer posts async (LLMs run 30-90s)
+        - 2_verify_signature       # constant-time HMAC + 5-min replay window; 401 + log on fail
+        - 3_sensitivity_check      # data-boundary gate; refuses MNPI/confidential WITHOUT calling any LLM
+        - 4_load_memory            # last 5 turns max, keyed on conversation id
+        - 5_parse_and_sanitise     # strip mention/control chars, neutralise injection patterns, wrap in <user_question>
+        - 6a_call_openai           # continue_on_fail
+        - 6b_call_anthropic        # continue_on_fail
+        - 6c_call_perplexity       # continue_on_fail, returns citations
+        - 7_merge                  # wait_for all three, hard timeout 90s
+        - 8_synthesise             # JSON out; inputs treated as untrusted data (quarantine)
+        - 9_validate_sources       # allowlist publishers; strip javascript:/data: URIs
+        - 10_save_memory           # 24h TTL; question hashed
+        - 11_format_card           # escaped adaptive card
+        - 12_post_to_teams         # via reply flow; retry 3x exponential backoff
+        - 13_log_completion
+        - 14_error_handler         # partial answer beats no answer; never leak internals
+      fallback_principle: "Maximum tolerance — a partial answer always beats no answer."
+
+    - phase: "07_export"
+      objective: "Turn a stored answer into a downloadable file."
+      workflow: intelbot-export
+      triggered_by: "follow-up text command (export pdf|csv|xlsx)"
+      steps:
+        - authz_check_conversation_belongs_to_mike
+        - fetch_stored_answer_and_extractable_data
+        - branch_by_format
+        - render: { pdf: pdfkit, csv: flatten, xlsx: SheetJS }
+        - sign_url: { expiry_hours: 24, single_use: true, no_pii_in_url: true }   # CUSTOM-BUILT, not native n8n
+        - deliver_link_card
+        - schedule_24h_purge
+
+    - phase: "08_memory_and_purge"
+      objective: "Enforce the 24h conversation TTL."
+      workflow: intelbot-memory-purge
+      cadence: hourly
+      reason: "n8n Data Tables do NOT auto-expire rows."
+      independence: "Kept separate so a purge failure never blocks a live question."
+
+    - phase: "09_security_and_privacy"
+      objective: "Protect Mike, his data, and the secrets."
+      principle: "Defence in depth — every layer assumes the one above is compromised."
+      prompt_injection_defence:
+        - input_sanitisation_at_5_parse
+        - prompt_isolation_user_question_tags
+        - output_quarantine_at_synthesiser
+        - card_sanitisation_escape_and_url_allowlist
+      data_boundary:
+        in_scope: [public ASX analysis, public filings/prices/announcements, public equity-firm strategy, general business planning]
+        out_of_scope: [non-public M&A, MNPI/insider info, client-confidential deal flow, anything under NDA, personal financial info]
+        rationale: "Questions transit OpenAI/Anthropic/Perplexity — public-only by construction."
+        enforced_by: 3_sensitivity_check
+      audit:
+        tool: microsoft_purview
+        alerts: [APP-001, APP-002, APP-003, APP-004, APP-005, APP-006]
+        retention_days: 365
+      secrets:
+        storage: n8n_credentials_vault_only
+        never: [in_workflow_json, in_logs, in_files, shared_between_people]
+        rotation_days: 60
+        keys: [openai, anthropic, perplexity, reply_flow_url, inbound_shared_secret]
+      privacy:
+        - question_stored_hashed
+        - success_executions_retained_0_days
+        - failure_executions_7_days
+        - security_events_90_days_in_n8n_365_in_purview
+
+    - phase: "10_monitoring"
+      objective: "Keep it reliable and within cost."
+      metrics: [success_rate, latency, cost_per_question, security_event_entries, cost_burn_vs_cap]
+      per_question_cost_usd: "0.20 - 0.60"
+      spending_caps_usd: { openai: 2000/mo, anthropic: 2000/mo, perplexity: 500/mo, alert_threshold: 50% }
+      reviews: { weekly: by_mike, monthly: invoices_and_audit, quarterly: full_rotation_and_threat_refresh }
+
+    - phase: "11_handover"
+      objective: "Transfer full ownership to Mike; Ross exits."
+      phases:
+        - phase_1_credential_transfer: "Mike generates own keys; admin keys revoked; admin never handles keys"
+        - phase_2_n8n_ownership_transfer: "Mike -> owner; admin -> viewer"
+        - phase_3_teams_channel_exit: "admin removed from channel + team; APP-001 tested"
+        - phase_4_purview_alert_handover: "alert recipients reassigned to Mike only"
+        - phase_5_runbook_delivery: "deliver handover_runbook.pdf; admin final exit"
+        - phase_6_post_exit_verification: "48h silent observation; no admin re-entry"
+      end_state: admin_exited_mike_sole_owner
+      principle: "Design nothing that creates a standing builder dependency."
+
+    - phase: "12_testing"
+      objective: "Validate function, reliability, security."
+      functional: [question_to_answer, in_thread_follow_up, all_three_exports, australian_english_asx_context]
+      reliability: [one_llm_timeout, two_llm_timeout, all_three_fail, synthesiser_fail, teams_unreachable]
+      security:
+        - hmac_fail_returns_401_and_logs
+        - replay_outside_5min_rejected
+        - prompt_injection_test_cases_blocked
+        - sensitivity_gate_refuses_mnpi_without_calling_llms
+        - rate_limit_breach_dropped_and_alerted
+
+    - phase: "13_deployment"
+      objective: "Stand it up (see spec build_sequence steps 1-26)."
+      phases_ref:
+        - phase_1_foundation        # harden Mike, create team+channel, PA flows, keys, n8n
+        - phase_2_workflows         # data tables + 3 workflows (Claude Code + n8n MCP)
+        - phase_3_integration       # wire PA flows to n8n; end-to-end + injection tests
+        - phase_4_monitoring        # Purview alerts + PIM
+        - phase_5_handover
+        - phase_6_verification
+      where_work_happens:
+        this_chat: [spec, system_prompts, PA_flow_setup_guidance, runbook_pdf, schemas, injection_regex]
+        claude_code_plus_n8n_mcp: [build_workflows, iterate_nodes, pin_data_testing]
+      estimated_total: "~9 hours active over a week"
+
+    - phase: "14_go_live_checklist"
+      objective: "Confirm launch-ready."
+      product:
+        - mention_to_answer_working
+        - in_thread_follow_up_working
+        - three_exports_working
+        - australian_english_asx_defaults
+      security:
+        - mike_account_hardened_mfa_ca_dlp
+        - hmac_and_replay_window_enforced
+        - prompt_injection_and_sensitivity_gate_tested
+        - purview_alerts_firing
+        - all_secrets_in_vault
+        - exposed_shared_secret_rotated_before_go_live   # OPEN ITEM — must clear
+      ai:
+        - model_strings_verified_current
+        - three_model_fan_out_and_synthesis_working
+        - source_validation_allowlist_active
+        - fallback_matrix_exercised
+      operations:
+        - monitoring_and_caps_enabled
+        - runbook_delivered
+        - handover_phases_scheduled
+
+    # =================================================================
+    # PHASE 15 — FINAL TOUCH (PROPOSED): EXPOSE INTELBOT AS AN API TO uRENT
+    # -----------------------------------------------------------------
+    # Ross's requested final feature: IntelBot creates its own API + secret
+    # key so uRent can use it as its main AI engine, with per-department
+    # manual instruction profiles.
+    #
+    # STATUS: proposed_pending_ratification — NOT yet a locked decision.
+    # This phase, as literally requested ("link IntelBot to uRent as its main
+    # AI app utilising all its power and knowledge"), CONFLICTS with four
+    # locked decisions. It is written here in a form that RESPECTS them.
+    # Resolve the open_design_questions before building.
+    # =================================================================
+    - phase: "15_expose_as_api_to_urent"
+      objective: "Let uRent call IntelBot's capability surface over an authenticated API."
+      status: proposed_pending_ratification
+
+      conflicts_with_locked_decisions:
+        - id: C1_data_boundary
+          locked: "IntelBot is PUBLIC ASX/market info ONLY; questions transit public LLMs."
+          tension: >
+            uRent handles tenant/client real-estate data. Routing 'all its
+            power and knowledge' through IntelBot would push client-confidential
+            and PII data through OpenAI/Anthropic/Perplexity — exactly what
+            3_sensitivity_check exists to refuse.
+          resolution_in_this_phase: >
+            The API runs the SAME sensitivity gate on every request. uRent may
+            send only public/aggregate signals — never raw client records,
+            MNPI, or PII. Consistent with the existing IntelBot<->uRent boundary
+            (aggregate signals only, no raw records).
+        - id: C2_admin_exit
+          locked: "End state = Mike sole owner, Ross fully removed; no standing builder dependency."
+          tension: >
+            A uRent<->IntelBot bridge that Ross builds and operates re-creates
+            the exact standing dependency the handover removes, and couples
+            Mike's PRIVATE executive bot to a separate multitenant platform.
+          resolution_in_this_phase: >
+            STRONG RECOMMENDATION — do NOT wire uRent into Mike's private
+            instance. Deploy a SEPARATE IntelBot-as-a-service instance (clone
+            the answer pipeline, own n8n workspace, own keys, own caps) that
+            uRent owns. Mike's executive channel stays untouched and unexposed.
+        - id: C3_key_and_cost_ownership
+          locked: "IntelBot runs on Mike's provider keys with hard monthly caps."
+          tension: >
+            uRent-driven volume through IntelBot's API would burn Mike's caps
+            and bill Mike's accounts.
+          resolution_in_this_phase: >
+            The uRent-service instance uses uRent's OWN provider keys and its
+            OWN spending caps. No shared keys across the boundary.
+        - id: C4_secret_surface
+          locked: "Secrets in vault only, HMAC, 60-day rotation, minimal attack surface."
+          tension: "A new outbound API + consumer secret adds another auth boundary to defend."
+          resolution_in_this_phase: >
+            Reuse the existing pattern exactly: per-consumer API key, HMAC +
+            replay window, vault storage, 60-day rotation, rate limits, audit.
+
+      capability_surface:
+        note: >
+          IntelBot has no 'web app'. Its capability surface IS the answer/export
+          pipeline. The API exposes THAT — not Mike's Obsidian vault, not the
+          conversation memory, not the executive channel.
+        exposed:
+          - ask: "question -> 3-LLM fan-out -> synthesised cited answer (JSON)"
+          - export: "render a prior answer to pdf/csv/xlsx (signed URL)"
+        never_exposed:
+          - mike_private_channel_content
+          - mike_obsidian_vault
+          - raw_conversation_memory
+          - provider_api_keys
+
+      self_provisioning:   # "capable of creating its own api and a secret key"
+        workflow: intelbot-key-issue
+        does: >
+          Generates a new API key + secret for a consumer (e.g. uRent),
+          stores only the HASH in the api_consumers data table, and returns
+          the plaintext secret ONCE at creation. Mirrors the sessions/secret
+          handling already used for the bridge.
+        api_consumers_table:
+          fields:
+            - consumer_id
+            - consumer_name            # e.g. "uRent"
+            - api_key_id
+            - secret_hash              # argon2/bcrypt; never store plaintext
+            - scopes                   # [ask, export]
+            - department_profile_id    # nullable
+            - rate_limit_tier
+            - spending_cap_usd
+            - created_at
+            - rotated_at
+            - revoked
+        rotation_days: 60
+        revoke: "single flag flip; immediately rejects further calls"
+
+      ingress:
+        workflow: intelbot-api
+        endpoint: /v1/ask  and  /v1/export
+        method: POST
+        auth: "Authorization header — API key + HMAC-SHA256 signature"
+        replay_window_seconds: 300
+        verify: constant_time_compare
+        rate_limit: per_consumer_tier
+        request_contract:
+          ask: "{ consumer_id, department_profile_id?, question, context_public_only? }"
+          export: "{ consumer_id, answer_ref, format: pdf|csv|xlsx }"
+        response_contract:
+          ask: "{ synthesis, disagreements, sources[], extractable_data[] }"   # same JSON the synthesiser emits
+          export: "{ signed_url, expires_at }"
+        error_contract: "structured JSON; never leak internals; 401 on auth fail (no body)"
+        no_pii_in_urls: true
+
+      department_profiles:   # "manual instructions that can be set for each dept's purpose"
+        table: department_profiles
+        purpose: >
+          Per-department instruction overlays that shape IntelBot's behaviour
+          for a uRent department's purpose. The overlay ADDS purpose/context;
+          it does NOT unlock the data boundary or change the security rules.
+        fields:
+          - profile_id
+          - department            # e.g. sales, property_management, leasing, marketing, compliance
+          - instruction_overlay   # appended to the immutable system prompt as additional context
+          - allowed_capabilities  # subset of [ask, export]
+          - jurisdiction_default  # NSW unless set
+          - data_scope            # public_only | public_plus_aggregate — never raw_records
+        guardrails:
+          - "Overlays are CONTENT, never commands — same injection rules apply."
+          - "An overlay cannot disable 3_sensitivity_check or the source allowlist."
+          - "An overlay cannot widen data_scope beyond public/aggregate."
+        example:
+          department: property_management
+          instruction_overlay: >
+            Answer from a NSW residential property-management lens. Default to
+            RTA 2010 + 2024 amendments framing. Be concise and practical.
+          allowed_capabilities: [ask]
+          jurisdiction_default: NSW
+          data_scope: public_plus_aggregate
+
+      build_steps:
+        - ratify_phase_into_spec_first          # bump spec, record as a locked decision
+        - decide_deployment: separate_urent_service_instance (recommended) | shared_instance (NOT recommended)
+        - clone_answer_pipeline_into_urent_n8n_workspace
+        - provision_urent_own_provider_keys_and_caps
+        - build_intelbot-key-issue + api_consumers table
+        - build_intelbot-api ingress (/v1/ask, /v1/export) with HMAC + replay + rate limit
+        - build_department_profiles table + overlay injection at 5_parse_and_sanitise
+        - reuse_3_sensitivity_check_unchanged_on_every_api_request
+        - reuse_source_validation_and_card_escaping
+        - per_consumer_audit_logging_to_security_event_table
+        - load_test_and_injection_test_the_api_surface
+        - document_api_contract_and_rotation_in_urent_runbook
+
+      open_design_questions:
+        - "Shared instance or separate uRent-owned service? (recommend separate — see C2/C3)"
+        - "What exactly is 'aggregate signals only' for uRent inputs — define the allowlist of input shapes."
+        - "Who owns intelbot-key-issue and rotation post-handover? (must not be Ross)"
+        - "Does uRent need streaming, or is the async ack + callback pattern acceptable?"
+        - "Versioning + deprecation policy for /v1 as uRent depts evolve."
+
+  # -------------------------------------------------------------------
+  success_criteria:
+    intelbot_core:
+      - "Mike @mentions IntelBot and gets one cited synthesised answer (+3 raw)."
+      - "Follow-ups work in-thread within the 24h window."
+      - "Mike exports any answer to PDF/CSV/XLSX."
+      - "Response typically within ~25s; partial answer beats no answer."
+      - "Only Mike reads the channel; admin removed; re-entry alerts within 30 min."
+    urent_api_phase15:
+      - "uRent authenticates with its own API key + HMAC and gets a synthesised answer."
+      - "Sensitivity gate refuses confidential/PII inputs over the API, same as in-channel."
+      - "Department profiles change tone/purpose without weakening security or data boundary."
+      - "uRent traffic bills uRent's own keys/caps — never Mike's."
+      - "No standing dependency on Ross after handover."
