@@ -59,6 +59,79 @@ export async function callAnthropic(
   }
 }
 
+// Streaming variant of the Anthropic call, used for the synthesiser so the
+// final answer types out live. Yields text deltas; the generator's return value
+// reports overall success/failure (capture it via manual .next() iteration).
+export async function* callAnthropicStream(
+  system: string,
+  user: string,
+  opts: { model?: string; maxTokens?: number } = {}
+): AsyncGenerator<string, { ok: boolean; error?: string }, unknown> {
+  const model = opts.model || process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return { ok: false, error: "ANTHROPIC_API_KEY not set" };
+
+  let res: Response;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": ANTHROPIC_VERSION,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: opts.maxTokens ?? 4096,
+        system,
+        stream: true,
+        messages: [{ role: "user", content: user }],
+      }),
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+
+  if (!res.ok || !res.body) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const d = await res.json();
+      msg = d?.error?.message || msg;
+    } catch {}
+    return { ok: false, error: msg };
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith("data:")) continue;
+        const payload = t.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const evt = JSON.parse(payload);
+          if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta") {
+            yield evt.delta.text as string;
+          } else if (evt.type === "error") {
+            return { ok: false, error: evt.error?.message || "stream error" };
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "stream read failed" };
+  }
+  return { ok: true };
+}
+
 export async function callOpenAI(
   system: string,
   user: string,

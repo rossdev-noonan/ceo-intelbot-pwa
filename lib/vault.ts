@@ -216,8 +216,10 @@ function folderWeight(file: string): number {
   return 1;
 }
 
-// BM25 ranking over the chunk index.
-export function searchVault(query: string, k = 8): Hit[] {
+// BM25 ranking over the chunk index, with a per-file cap for source diversity.
+// maxPerFile keeps a single note from monopolising the results on broad
+// questions, while still allowing depth (default 4) on focused ones.
+export function searchVault(query: string, k = 8, maxPerFile = 4): Hit[] {
   const idx = getIndex();
   const qTerms = tokenize(query);
   if (!qTerms.length || !idx.chunks.length) return [];
@@ -226,30 +228,48 @@ export function searchVault(query: string, k = 8): Hit[] {
   const b = 0.75;
   const N = idx.chunks.length;
 
-  const scored = idx.chunks.map((c) => {
-    let score = 0;
-    for (const term of qTerms) {
-      const f = c.tf.get(term);
-      if (!f) continue;
-      const n = idx.df.get(term) ?? 0;
-      const idf = Math.log(1 + (N - n + 0.5) / (n + 0.5));
-      const denom = f + k1 * (1 - b + (b * c.len) / (idx.avgLen || 1));
-      score += idf * ((f * (k1 + 1)) / denom);
-    }
-    return { c, score: score * folderWeight(c.file) };
-  });
-
-  return scored
+  const scored = idx.chunks
+    .map((c) => {
+      let score = 0;
+      for (const term of qTerms) {
+        const f = c.tf.get(term);
+        if (!f) continue;
+        const n = idx.df.get(term) ?? 0;
+        const idf = Math.log(1 + (N - n + 0.5) / (n + 0.5));
+        const denom = f + k1 * (1 - b + (b * c.len) / (idx.avgLen || 1));
+        score += idf * ((f * (k1 + 1)) / denom);
+      }
+      return { c, score: score * folderWeight(c.file) };
+    })
     .filter((s) => s.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k)
-    .map(({ c, score }) => ({
-      file: c.file,
-      title: c.title,
-      heading: c.heading,
-      text: c.text,
-      score: Math.round(score * 1000) / 1000,
-    }));
+    .sort((a, b) => b.score - a.score);
+
+  // Greedy diversity pass: take the best chunks but cap how many come from any
+  // one file. If we run short, a second pass relaxes the cap to fill up to k.
+  const perFile = new Map<string, number>();
+  const picked: typeof scored = [];
+  for (const s of scored) {
+    if (picked.length >= k) break;
+    const used = perFile.get(s.c.file) ?? 0;
+    if (used >= maxPerFile) continue;
+    perFile.set(s.c.file, used + 1);
+    picked.push(s);
+  }
+  if (picked.length < k) {
+    const have = new Set(picked);
+    for (const s of scored) {
+      if (picked.length >= k) break;
+      if (!have.has(s)) picked.push(s);
+    }
+  }
+
+  return picked.map(({ c, score }) => ({
+    file: c.file,
+    title: c.title,
+    heading: c.heading,
+    text: c.text,
+    score: Math.round(score * 1000) / 1000,
+  }));
 }
 
 // Build a grounded-context block + a numbered citation list for the LLM.

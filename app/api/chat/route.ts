@@ -1,4 +1,4 @@
-import { answer } from "@/lib/brain";
+import { answerStream, type StreamEvent } from "@/lib/brain";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // deep answers can take minutes
@@ -9,6 +9,7 @@ type Body = {
   history?: { role: string; content: string }[];
 };
 
+// Streams NDJSON events: {type:"status"|"sources"|"delta"|"done"|"error", ...}
 export async function POST(req: Request) {
   let body: Body = {};
   try {
@@ -17,47 +18,58 @@ export async function POST(req: Request) {
 
   const message = (body.message ?? "").toString().trim();
   const isDev = process.env.NODE_ENV !== "production";
+  const encoder = new TextEncoder();
+
+  const single = (evt: StreamEvent) =>
+    new Response(encoder.encode(JSON.stringify(evt) + "\n"), {
+      headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },
+    });
 
   if (!message) {
-    return Response.json({ reply: "Please enter a question." });
+    return single({ type: "error", error: "Please enter a question." });
   }
 
-  // Preview mode — no model keys yet, so the brain can't run.
+  // Preview mode — no model key configured.
   if (!process.env.ANTHROPIC_API_KEY) {
-    return Response.json({
-      connected: false,
-      reply:
-        "⚙️ Preview mode — no model key configured.\n\n" +
-        "Add ANTHROPIC_API_KEY (and optionally OPENAI_API_KEY, PERPLEXITY_API_KEY) " +
-        "to .env.local to enable grounded answers from your Obsidian knowledge base.\n\n" +
-        "You asked:\n“" +
-        message +
-        "”",
+    const reply =
+      "⚙️ Preview mode — no model key configured.\n\n" +
+      "Add ANTHROPIC_API_KEY (and optionally OPENAI_API_KEY, PERPLEXITY_API_KEY) " +
+      "to .env.local to enable grounded answers from your Obsidian knowledge base.\n\n" +
+      `You asked:\n“${message}”`;
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(JSON.stringify({ type: "delta", text: reply }) + "\n"));
+        controller.enqueue(
+          encoder.encode(
+            JSON.stringify({ type: "done", answer: reply, debug: { engines: "preview", retrieved: 0, sources: [], totalMs: 0 } }) + "\n"
+          )
+        );
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },
     });
   }
 
-  try {
-    const result = await answer(message, body.history);
-
-    // Dev-only debug line: which engines answered, timings, and what was retrieved.
-    const debug = isDev
-      ? {
-          engines: result.models
-            .map((m) => `${m.name} ${m.ok ? `✓ ${m.ms}ms` : `✗ ${m.error ?? "failed"}`}`)
-            .join(" · "),
-          retrieved: result.retrievedCount,
-          sources: result.sources.map((s) => `[${s.n}] ${s.file}`),
-          totalMs: result.ms,
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (obj: unknown) => controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+      try {
+        for await (const evt of answerStream(message, body.history)) {
+          // Strip the debug payload in production.
+          if (evt.type === "done" && !isDev) send({ type: "done", answer: evt.answer });
+          else send(evt);
         }
-      : undefined;
+      } catch (e) {
+        send({ type: "error", error: e instanceof Error ? e.message : "unknown error" });
+      } finally {
+        controller.close();
+      }
+    },
+  });
 
-    return Response.json({ connected: true, reply: result.answer, sources: result.sources, debug });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown error";
-    return Response.json({
-      connected: false,
-      reply: "The IntelBot brain hit an error: " + msg,
-      ...(isDev ? { debug: { error: msg } } : {}),
-    });
-  }
+  return new Response(stream, {
+    headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },
+  });
 }

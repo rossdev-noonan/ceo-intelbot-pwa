@@ -24,6 +24,7 @@ export default function Home() {
   const [activeId, setActiveId] = useState<string>("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState(STATUSES[0]);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -52,21 +53,12 @@ export default function Home() {
     }
   }, [chats]);
 
-  useEffect(() => {
-    if (!loading) return;
-    let i = 0;
-    const t = setInterval(() => {
-      i = (i + 1) % STATUSES.length;
-      setStatus(STATUSES[i]);
-    }, 4000);
-    return () => clearInterval(t);
-  }, [loading]);
-
   const active = chats.find((c) => c.id === activeId);
+  const lastContent = active?.messages[active.messages.length - 1]?.content;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [active?.messages.length, loading]);
+  }, [active?.messages.length, loading, lastContent]);
 
   function newChat() {
     const c = { id: uid(), title: "New chat", messages: [] };
@@ -91,7 +83,28 @@ export default function Home() {
       )
     );
     setLoading(true);
+    setStreaming(false);
     setStatus(STATUSES[0]);
+
+    // Incrementally update the streaming assistant message in the active chat.
+    let started = false;
+    let acc = "";
+    const upsert = (content: string, debug?: string) => {
+      setChats((prev) =>
+        prev.map((c) => {
+          if (c.id !== activeId) return c;
+          const msgs = [...c.messages];
+          if (started) {
+            msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content, debug };
+          } else {
+            msgs.push({ role: "assistant", content, ts: Date.now(), debug });
+          }
+          return { ...c, messages: msgs };
+        })
+      );
+      started = true;
+    };
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -102,48 +115,66 @@ export default function Home() {
           history: active.messages,
         }),
       });
-      const data = await res.json();
-      const reply = (data?.reply ?? "No response.").toString();
-      // Dev-only debug line (server only sends `debug` outside production).
-      let debug: string | undefined;
-      if (data?.debug) {
-        const d = data.debug;
-        debug = d.error
-          ? `⚠ brain error: ${d.error}`
-          : `engines: ${d.engines} · retrieved ${d.retrieved} notes · ${
-              d.totalMs
-            }ms\n${(d.sources ?? []).join("\n")}`;
+      if (!res.body) throw new Error("No response stream");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let debugStr: string | undefined;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t) continue;
+          let evt: {
+            type: string;
+            stage?: string;
+            text?: string;
+            error?: string;
+            debug?: {
+              engines?: string;
+              retrieved?: number;
+              totalMs?: number;
+              sources?: string[];
+            };
+          };
+          try {
+            evt = JSON.parse(t);
+          } catch {
+            continue;
+          }
+          if (evt.type === "status") {
+            setStatus(evt.stage ?? "");
+          } else if (evt.type === "delta") {
+            acc += evt.text ?? "";
+            setStreaming(true);
+            upsert(acc, debugStr);
+          } else if (evt.type === "error") {
+            acc += (acc ? "\n\n" : "") + "⚠ " + (evt.error ?? "error");
+            upsert(acc, debugStr);
+          } else if (evt.type === "done") {
+            const d = evt.debug;
+            if (d) {
+              debugStr = `engines: ${d.engines} · retrieved ${d.retrieved} notes · ${d.totalMs}ms\n${(
+                d.sources ?? []
+              ).join("\n")}`;
+              upsert(acc, debugStr);
+            }
+          }
+        }
       }
-      setChats((prev) =>
-        prev.map((c) =>
-          c.id === activeId
-            ? {
-                ...c,
-                messages: [
-                  ...c.messages,
-                  { role: "assistant", content: reply, ts: Date.now(), debug },
-                ],
-              }
-            : c
-        )
-      );
+      if (!started) upsert("No response.");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "unknown error";
-      setChats((prev) =>
-        prev.map((c) =>
-          c.id === activeId
-            ? {
-                ...c,
-                messages: [
-                  ...c.messages,
-                  { role: "assistant", content: "Error: " + msg, ts: Date.now() },
-                ],
-              }
-            : c
-        )
-      );
+      upsert((acc ? acc + "\n\n" : "") + "Error: " + msg);
     } finally {
       setLoading(false);
+      setStreaming(false);
     }
   }
 
@@ -229,7 +260,7 @@ export default function Home() {
                 )}
               </div>
             ))}
-            {loading && (
+            {loading && !streaming && (
               <div className="flex justify-start">
                 <div className="rounded-2xl px-4 py-3 bg-[#0f1825] border border-[#1c2838] text-[#8aa0bb] text-sm flex items-center gap-2">
                   <span className="inline-block h-2 w-2 rounded-full bg-[#4a90d9] animate-pulse" />
