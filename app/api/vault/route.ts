@@ -1,4 +1,4 @@
-import { getVaultStats, searchVault } from "@/lib/vault";
+import { ensureIndex, getVaultStats, searchVault } from "@/lib/vault";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,8 @@ export async function GET(req: Request) {
 
   let stats;
   try {
-    stats = getVaultStats();
+    await ensureIndex();
+    stats = await getVaultStats();
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";
     return Response.json({ ok: false, error: msg }, { status: 500 });

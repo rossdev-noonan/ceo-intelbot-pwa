@@ -1,4 +1,4 @@
-import { searchVault, buildContext, type Hit } from "@/lib/vault";
+import { searchVault, buildContext, ensureIndex, type Hit } from "@/lib/vault";
 import {
   callAnthropic,
   callAnthropicStream,
@@ -31,7 +31,8 @@ type Source = { n: number; file: string; heading: string; score: number };
 
 // Shared prep: retrieve from the vault and build the prompts for both the
 // blocking and streaming pipelines.
-function prepare(question: string, history?: Turn[]) {
+async function prepare(question: string, history?: Turn[]) {
+  await ensureIndex();
   const hits: Hit[] = searchVault(question, 8);
   const { context } = buildContext(hits);
   const sources: Source[] = hits.map((h, i) => ({
@@ -76,7 +77,7 @@ function buildSynthUser(kb: string, ok: ModelResult[], question: string): string
 // The full Teams-parity pipeline (blocking): retrieve -> fan out -> synthesise.
 export async function answer(question: string, history?: Turn[]): Promise<BrainResult> {
   const start = Date.now();
-  const { hits, sources, kb, analystUser, researchUser } = prepare(question, history);
+  const { hits, sources, kb, analystUser, researchUser } = await prepare(question, history);
 
   const all = await fanOut(analystUser, researchUser);
   const ok = all.filter((m) => m.ok && m.text);
@@ -134,7 +135,7 @@ export async function* answerStream(
   const start = Date.now();
 
   yield { type: "status", stage: "Searching the knowledge base…" };
-  const { hits, sources, kb, analystUser, researchUser } = prepare(question, history);
+  const { hits, sources, kb, analystUser, researchUser } = await prepare(question, history);
   yield { type: "sources", sources };
 
   yield { type: "status", stage: "Consulting the analysis engines…" };

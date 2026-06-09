@@ -41,6 +41,8 @@ type VaultIndex = {
   signature: string; // file count + newest mtime; rebuild when it changes
   builtAt: number;
   fileCount: number;
+  mdCount: number;
+  pdfCount: number;
   chunks: IndexedChunk[];
   df: Map<string, number>; // term -> number of chunks containing it
   avgLen: number;
@@ -66,7 +68,7 @@ function stripFrontmatter(raw: string): string {
   return raw;
 }
 
-function walkMarkdown(dir: string, out: string[] = []): string[] {
+function walkFiles(dir: string, out: string[] = []): string[] {
   let entries: fs.Dirent[] = [];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -76,9 +78,12 @@ function walkMarkdown(dir: string, out: string[] = []): string[] {
   for (const e of entries) {
     if (e.isDirectory()) {
       if (SKIP_DIRS.has(e.name)) continue;
-      walkMarkdown(path.join(dir, e.name), out);
-    } else if (e.isFile() && e.name.toLowerCase().endsWith(".md")) {
-      out.push(path.join(dir, e.name));
+      walkFiles(path.join(dir, e.name), out);
+    } else if (e.isFile()) {
+      const lower = e.name.toLowerCase();
+      if (lower.endsWith(".md") || lower.endsWith(".pdf")) {
+        out.push(path.join(dir, e.name));
+      }
     }
   }
   return out;
@@ -132,6 +137,67 @@ function chunkNote(relPath: string, body: string): Omit<IndexedChunk, "tf" | "le
   return chunks;
 }
 
+// --- PDF extraction (cached to disk) -------------------------------------
+
+// Extracted PDF text is cached on disk so large legislation PDFs only parse
+// once; keyed by path + mtime. Kept out of git via .gitignore.
+const CACHE_DIR = path.join(process.cwd(), ".vaultcache");
+const PDF_CACHE_FILE = path.join(CACHE_DIR, "pdf-text.json");
+type PdfCache = Record<string, { mtimeMs: number; pages: string[] }>;
+
+function loadPdfCache(): PdfCache {
+  try {
+    return JSON.parse(fs.readFileSync(PDF_CACHE_FILE, "utf8")) as PdfCache;
+  } catch {
+    return {};
+  }
+}
+
+function savePdfCache(cache: PdfCache): void {
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(PDF_CACHE_FILE, JSON.stringify(cache));
+  } catch {}
+}
+
+async function extractPdfPages(abs: string): Promise<string[]> {
+  const { PDFParse } = await import("pdf-parse");
+  const buf = fs.readFileSync(abs);
+  const parser = new PDFParse({ data: buf });
+  const r = await parser.getText();
+  // r.pages is an array of per-page strings/objects; fall back to splitting text.
+  const pages = Array.isArray(r.pages)
+    ? r.pages.map((p: unknown) =>
+        typeof p === "string" ? p : ((p as { text?: string })?.text ?? "")
+      )
+    : String(r.text ?? "").split("\f");
+  return pages.map((p) => p.trim()).filter(Boolean);
+}
+
+// Chunk PDF pages: one chunk per page, windowing oversized pages.
+function chunkPdf(relPath: string, pages: string[]): Omit<IndexedChunk, "tf" | "len">[] {
+  const title = path.basename(relPath).replace(/\.pdf$/i, "");
+  const chunks: Omit<IndexedChunk, "tf" | "len">[] = [];
+  pages.forEach((page, idx) => {
+    const heading = `p.${idx + 1}`;
+    if (page.length <= MAX_CHUNK_CHARS) {
+      chunks.push({ file: relPath, title, heading, text: page });
+      return;
+    }
+    let window = "";
+    for (const para of page.split(/\n\s*\n/)) {
+      if (window && (window + "\n\n" + para).length > MAX_CHUNK_CHARS) {
+        chunks.push({ file: relPath, title, heading, text: window.trim() });
+        window = para;
+      } else {
+        window = window ? window + "\n\n" + para : para;
+      }
+    }
+    if (window.trim()) chunks.push({ file: relPath, title, heading, text: window.trim() });
+  });
+  return chunks;
+}
+
 // --- index build ---------------------------------------------------------
 
 function computeSignature(files: string[]): string {
@@ -145,63 +211,107 @@ function computeSignature(files: string[]): string {
   return `${files.length}:${Math.round(newest)}`;
 }
 
-function buildIndex(): VaultIndex {
-  const files = walkMarkdown(VAULT_PATH);
+async function buildIndex(): Promise<VaultIndex> {
+  const files = walkFiles(VAULT_PATH);
   const signature = computeSignature(files);
 
   const chunks: IndexedChunk[] = [];
   const df = new Map<string, number>();
   let totalLen = 0;
+  let mdCount = 0;
+  let pdfCount = 0;
+
+  // Index one chunk: tokenise (title + heading + body) and update df/avgLen.
+  const addChunk = (c: Omit<IndexedChunk, "tf" | "len">) => {
+    const tokens = tokenize(`${c.title} ${c.heading} ${c.text}`);
+    const tf = new Map<string, number>();
+    for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1);
+    for (const t of tf.keys()) df.set(t, (df.get(t) ?? 0) + 1);
+    totalLen += tokens.length;
+    chunks.push({ ...c, tf, len: tokens.length });
+  };
+
+  const pdfCache = loadPdfCache();
+  let cacheDirty = false;
 
   for (const abs of files) {
-    let raw = "";
-    try {
-      raw = fs.readFileSync(abs, "utf8");
-    } catch {
-      continue;
-    }
     const rel = path.relative(VAULT_PATH, abs).replace(/\\/g, "/");
-    const body = stripFrontmatter(raw);
+    const isPdf = abs.toLowerCase().endsWith(".pdf");
 
-    for (const c of chunkNote(rel, body)) {
-      // Index the heading + title alongside the body so a query that matches a
-      // note's name surfaces even when the term is sparse in the prose.
-      const tokens = tokenize(`${c.title} ${c.heading} ${c.text}`);
-      const tf = new Map<string, number>();
-      for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1);
-      for (const t of tf.keys()) df.set(t, (df.get(t) ?? 0) + 1);
-      totalLen += tokens.length;
-      chunks.push({ ...c, tf, len: tokens.length });
+    if (isPdf) {
+      let mtimeMs = 0;
+      try {
+        mtimeMs = fs.statSync(abs).mtimeMs;
+      } catch {
+        continue;
+      }
+      let entry = pdfCache[rel];
+      if (!entry || entry.mtimeMs !== mtimeMs) {
+        try {
+          const pages = await extractPdfPages(abs);
+          entry = { mtimeMs, pages };
+          pdfCache[rel] = entry;
+          cacheDirty = true;
+        } catch {
+          continue; // skip unreadable PDFs rather than failing the whole build
+        }
+      }
+      for (const c of chunkPdf(rel, entry.pages)) addChunk(c);
+      pdfCount++;
+    } else {
+      let raw = "";
+      try {
+        raw = fs.readFileSync(abs, "utf8");
+      } catch {
+        continue;
+      }
+      for (const c of chunkNote(rel, stripFrontmatter(raw))) addChunk(c);
+      mdCount++;
     }
   }
+
+  if (cacheDirty) savePdfCache(pdfCache);
 
   return {
     signature,
     builtAt: Date.now(),
     fileCount: files.length,
+    mdCount,
+    pdfCount,
     chunks,
     df,
     avgLen: chunks.length ? totalLen / chunks.length : 0,
   };
 }
 
-function getIndex(): VaultIndex {
-  const files = walkMarkdown(VAULT_PATH);
+// Build (or rebuild on change) and cache the index. Async because PDF
+// extraction is async; callers in async contexts must await this before search.
+let building: Promise<VaultIndex> | null = null;
+export async function ensureIndex(): Promise<VaultIndex> {
+  const files = walkFiles(VAULT_PATH);
   const signature = computeSignature(files);
-  if (!cached || cached.signature !== signature) {
-    cached = buildIndex();
+  if (cached && cached.signature === signature) return cached;
+  // Coalesce concurrent rebuilds so two requests don't parse PDFs twice.
+  if (!building) {
+    building = buildIndex().then((idx) => {
+      cached = idx;
+      building = null;
+      return idx;
+    });
   }
-  return cached;
+  return building;
 }
 
 // --- public API ----------------------------------------------------------
 
-export function getVaultStats() {
-  const idx = getIndex();
+export async function getVaultStats() {
+  const idx = await ensureIndex();
   return {
     vaultPath: VAULT_PATH,
     exists: fs.existsSync(VAULT_PATH),
     fileCount: idx.fileCount,
+    mdCount: idx.mdCount,
+    pdfCount: idx.pdfCount,
     chunkCount: idx.chunks.length,
     vocabulary: idx.df.size,
     builtAt: new Date(idx.builtAt).toISOString(),
@@ -220,7 +330,8 @@ function folderWeight(file: string): number {
 // maxPerFile keeps a single note from monopolising the results on broad
 // questions, while still allowing depth (default 4) on focused ones.
 export function searchVault(query: string, k = 8, maxPerFile = 4): Hit[] {
-  const idx = getIndex();
+  const idx = cached; // caller must await ensureIndex() first
+  if (!idx) return [];
   const qTerms = tokenize(query);
   if (!qTerms.length || !idx.chunks.length) return [];
 
