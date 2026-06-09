@@ -208,6 +208,14 @@ export function getVaultStats() {
   };
 }
 
+// Authoritative source notes should outrank the bot's own past exports and
+// rough drafts. Folder-based multipliers applied on top of the BM25 score.
+function folderWeight(file: string): number {
+  if (file.startsWith("Conversations/")) return 0.4; // prior Q&A — avoid echo chamber
+  if (file.startsWith("Inbox/")) return 0.7; // drafts / unfiled
+  return 1;
+}
+
 // BM25 ranking over the chunk index.
 export function searchVault(query: string, k = 8): Hit[] {
   const idx = getIndex();
@@ -228,7 +236,7 @@ export function searchVault(query: string, k = 8): Hit[] {
       const denom = f + k1 * (1 - b + (b * c.len) / (idx.avgLen || 1));
       score += idf * ((f * (k1 + 1)) / denom);
     }
-    return { c, score };
+    return { c, score: score * folderWeight(c.file) };
   });
 
   return scored

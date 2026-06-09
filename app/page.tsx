@@ -108,10 +108,10 @@ export default function Home() {
       if (data?.debug) {
         const d = data.debug;
         debug = d.error
-          ? `⚠ upstream fetch error: ${d.error}`
-          : `upstream ${d.status} ${d.statusText} · ${
-              d.ok ? "ok" : "ERROR"
-            } · raw: ${d.raw}`;
+          ? `⚠ brain error: ${d.error}`
+          : `engines: ${d.engines} · retrieved ${d.retrieved} notes · ${
+              d.totalMs
+            }ms\n${(d.sources ?? []).join("\n")}`;
       }
       setChats((prev) =>
         prev.map((c) =>
