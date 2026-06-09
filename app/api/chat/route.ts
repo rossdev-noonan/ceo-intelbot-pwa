@@ -35,6 +35,7 @@ export async function POST(req: Request) {
   }
 
   // Live mode — call the cloned IntelBot brain (synchronous chat webhook).
+  const isDev = process.env.NODE_ENV !== "production";
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -66,12 +67,35 @@ export async function POST(req: Request) {
           (data as Record<string, unknown>).response)) ||
       (typeof data === "string" ? data : JSON.stringify(data));
 
-    return Response.json({ connected: true, reply: String(reply) });
+    // Server-side debug — shows up in the dev console / .next/dev/logs.
+    console.log(
+      `[intelbot] upstream ${res.status} ${res.statusText} · ${raw.length} bytes`
+    );
+    if (isDev) console.log("[intelbot] raw upstream payload:", raw.slice(0, 2000));
+
+    return Response.json({
+      connected: res.ok,
+      reply: String(reply),
+      upstreamStatus: res.status,
+      // Dev-only: lets the front-end render the raw brain response inline.
+      ...(isDev
+        ? {
+            debug: {
+              status: res.status,
+              statusText: res.statusText,
+              ok: res.ok,
+              raw: raw.slice(0, 2000),
+            },
+          }
+        : {}),
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";
+    console.log("[intelbot] fetch error:", msg);
     return Response.json({
       connected: false,
       reply: "Couldn't reach the IntelBot brain: " + msg,
+      ...(isDev ? { debug: { error: msg } } : {}),
     });
   }
 }

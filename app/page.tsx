@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 type Role = "user" | "assistant";
-type Msg = { role: Role; content: string; ts: number };
+type Msg = { role: Role; content: string; ts: number; debug?: string };
 type Chat = { id: string; title: string; messages: Msg[] };
 
 const LS_KEY = "intelbot_chats_v1";
@@ -103,6 +103,16 @@ export default function Home() {
       });
       const data = await res.json();
       const reply = (data?.reply ?? "No response.").toString();
+      // Dev-only debug line (server only sends `debug` outside production).
+      let debug: string | undefined;
+      if (data?.debug) {
+        const d = data.debug;
+        debug = d.error
+          ? `⚠ upstream fetch error: ${d.error}`
+          : `upstream ${d.status} ${d.statusText} · ${
+              d.ok ? "ok" : "ERROR"
+            } · raw: ${d.raw}`;
+      }
       setChats((prev) =>
         prev.map((c) =>
           c.id === activeId
@@ -110,7 +120,7 @@ export default function Home() {
                 ...c,
                 messages: [
                   ...c.messages,
-                  { role: "assistant", content: reply, ts: Date.now() },
+                  { role: "assistant", content: reply, ts: Date.now(), debug },
                 ],
               }
             : c
@@ -196,7 +206,11 @@ export default function Home() {
             {active?.messages.map((m, i) => (
               <div
                 key={i}
-                className={m.role === "user" ? "flex justify-end" : "flex justify-start"}
+                className={
+                  m.role === "user"
+                    ? "flex justify-end"
+                    : "flex flex-col items-start"
+                }
               >
                 <div
                   className={`rounded-2xl px-4 py-3 whitespace-pre-wrap leading-relaxed text-[15px] ${
@@ -207,6 +221,11 @@ export default function Home() {
                 >
                   {m.content}
                 </div>
+                {m.debug && (
+                  <div className="mt-1 max-w-[90%] rounded-md bg-[#0b121c] border border-[#1c2838] px-3 py-2 text-[10px] font-mono text-[#7a8da3] whitespace-pre-wrap break-all">
+                    {m.debug}
+                  </div>
+                )}
               </div>
             ))}
             {loading && (
