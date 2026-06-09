@@ -1,0 +1,12 @@
+{
+  "name": "IntelBot — Noonan",
+  "short_name": "IntelBot",
+  "description": "Noonan IntelBot — AI analyst grounded in Noonan's own knowledge base.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1220",
+  "theme_color": "#0b1220",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "any", "type": "image/x-icon" }
+  ]
+}
