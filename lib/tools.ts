@@ -26,7 +26,7 @@ export const TOOLS = [
   {
     name: "web_search",
     description:
-      "Search the live web for current or external information (recent NSW law changes, market data) via Perplexity. Returns an answer with source URLs. Use only when the vault is insufficient.",
+      "Search the live web for ANY current or external information — competitors, other agencies/companies, market and industry data, recent NSW law changes, pricing, reviews. You are NOT limited to Noonan's own processes; research competitors and external topics freely and thoroughly. Returns an answer with source URLs.",
     input_schema: {
       type: "object",
       properties: { query: { type: "string" } },
@@ -36,7 +36,7 @@ export const TOOLS = [
   {
     name: "fetch_url",
     description:
-      "Fetch a specific public web page and return its main text. Use to read a source URL found via web_search.",
+      "Fetch ANY specific public web page and return its main text. Use this to read a competitor's website, a company/agency page, or any URL the user names or that web_search returns. Fetch multiple pages of a site (home, about, services, pricing) when analysing a competitor.",
     input_schema: {
       type: "object",
       properties: { url: { type: "string" } },
@@ -123,7 +123,7 @@ async function fetchUrlText(rawUrl: string): Promise<string> {
       .replace(/&gt;/g, ">")
       .replace(/\s+/g, " ")
       .trim();
-    return text.slice(0, 6000) || "(no readable text)";
+    return text.slice(0, 30000) || "(no readable text)";
   } catch (e) {
     return `Fetch failed: ${e instanceof Error ? e.message : "unknown error"}`;
   } finally {

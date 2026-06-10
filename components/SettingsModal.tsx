@@ -63,13 +63,13 @@ export default function SettingsModal({
             />
             <ToggleRow
               label="🌐 Web search"
-              desc="Live web research via Perplexity (current law, market data)."
+              desc="Live web research via Perplexity — competitors, companies, market data, current law."
               checked={c.web}
               onChange={(v) => setConn({ web: v })}
             />
             <ToggleRow
               label="📄 Fetch web page"
-              desc="Let the agent open and read a specific URL it finds."
+              desc="Let the agent open and read any URL — including competitor websites."
               checked={c.fetch}
               onChange={(v) => setConn({ fetch: v })}
             />

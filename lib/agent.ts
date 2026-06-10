@@ -4,7 +4,7 @@ import { toolsFor, runTool, toolLabel } from "@/lib/tools";
 import type { StreamEvent, BrainOptions } from "@/lib/brain";
 
 const ANTHROPIC_VERSION = "2023-06-01";
-const MAX_STEPS = 6;
+const MAX_STEPS = 8; // allow thorough multi-page / multi-source research
 
 type Turn = { role: string; content: string };
 type Block = { type: string; id?: string; name?: string; input?: Record<string, unknown>; text?: string };
@@ -12,7 +12,7 @@ type AnthMessage = { role: "user" | "assistant"; content: string | Block[] };
 
 function historyBlock(history?: Turn[]): string {
   if (!history?.length) return "";
-  const recent = history.slice(-6);
+  const recent = history.slice(-20);
   return (
     "Recent conversation (for context on follow-ups):\n" +
     recent.map((t) => `${t.role === "user" ? "User" : "IntelBot"}: ${t.content}`).join("\n") +
@@ -35,7 +35,7 @@ async function anthropicTurn(
         "x-api-key": key,
         "anthropic-version": ANTHROPIC_VERSION,
       },
-      body: JSON.stringify({ model, max_tokens: 1024, system, tools, messages }),
+      body: JSON.stringify({ model, max_tokens: 2048, system, tools, messages }),
     });
     const data = await res.json();
     if (!res.ok) return { ok: false, blocks: [], error: data?.error?.message || `HTTP ${res.status}` };
@@ -94,7 +94,7 @@ export async function* agentStream(
         output = `tool error: ${e instanceof Error ? e.message : "unknown"}`;
       }
       evidence.push({ tool: tu.name ?? "", input, output });
-      results.push({ type: "tool_result", id: tu.id, text: output.slice(0, 16000) } as Block);
+      results.push({ type: "tool_result", id: tu.id, text: output.slice(0, 60000) } as Block);
     }
     // tool_result blocks use tool_use_id + content; map to the API shape.
     messages.push({
@@ -131,8 +131,7 @@ export async function* agentStream(
 
   const gen = callAnthropicStream(
     withInstructions(AGENT_SYNTH_SYSTEM, opts.instructions),
-    synthUser,
-    { maxTokens: 4096 }
+    synthUser
   );
   let acc = "";
   let result: { ok: boolean; error?: string } = { ok: true };

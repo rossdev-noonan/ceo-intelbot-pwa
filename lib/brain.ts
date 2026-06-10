@@ -4,6 +4,7 @@ import {
   callAnthropicStream,
   callOpenAI,
   callPerplexity,
+  callDeepSeek,
   type ModelResult,
 } from "@/lib/models";
 import { ANALYST_SYSTEM, RESEARCH_SYSTEM, SYNTH_SYSTEM, withInstructions } from "@/lib/prompts";
@@ -25,7 +26,7 @@ type Turn = { role: string; content: string };
 
 function historyBlock(history?: Turn[]): string {
   if (!history?.length) return "";
-  const recent = history.slice(-6); // last 3 exchanges
+  const recent = history.slice(-20); // generous follow-up context
   const lines = recent.map(
     (t) => `${t.role === "user" ? "User" : "IntelBot"}: ${t.content}`
   );
@@ -68,6 +69,7 @@ async function fanOut(
   const calls = [
     callOpenAI(analyst, analystUser),
     callAnthropic(analyst, analystUser),
+    ...(process.env.DEEPSEEK_API_KEY ? [callDeepSeek(analyst, analystUser)] : []),
     ...(web ? [callPerplexity(research, researchUser)] : []),
   ];
   return Promise.all(calls);
@@ -119,7 +121,7 @@ export async function answer(
   const synth = await callAnthropic(
     withInstructions(SYNTH_SYSTEM, opts.instructions),
     buildSynthUser(kb, ok, question),
-    { maxTokens: 4096, name: "Synthesiser" }
+    { name: "Synthesiser" }
   );
   modelStatus.push({ name: synth.name, ok: synth.ok, ms: synth.ms, error: synth.error });
   const finalAnswer = synth.ok && synth.text ? synth.text : ok[0].text;
@@ -191,8 +193,7 @@ export async function* answerStream(
   yield { type: "status", stage: "Synthesising the answer…" };
   const gen = callAnthropicStream(
     withInstructions(SYNTH_SYSTEM, opts.instructions),
-    buildSynthUser(kb, ok, question),
-    { maxTokens: 4096 }
+    buildSynthUser(kb, ok, question)
   );
   let acc = "";
   let result: { ok: boolean; error?: string } = { ok: true };

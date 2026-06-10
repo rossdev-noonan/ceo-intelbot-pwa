@@ -14,6 +14,12 @@ export type ModelResult = {
 
 const ANTHROPIC_VERSION = "2023-06-01";
 
+// Generous default output ceiling so answers are never truncated. Override with
+// MAX_OUTPUT_TOKENS. This is a ceiling, not a target — actual length is
+// model-driven. Perplexity is capped lower (it feeds the synthesiser).
+export const MAX_OUTPUT_TOKENS = Number(process.env.MAX_OUTPUT_TOKENS) || 16000;
+const PERPLEXITY_MAX_TOKENS = Math.min(MAX_OUTPUT_TOKENS, 8000);
+
 function ms(start: number): number {
   return Date.now() - start;
 }
@@ -38,7 +44,7 @@ export async function callAnthropic(
       },
       body: JSON.stringify({
         model,
-        max_tokens: opts.maxTokens ?? 4096,
+        max_tokens: opts.maxTokens ?? MAX_OUTPUT_TOKENS,
         system,
         messages: [{ role: "user", content: user }],
       }),
@@ -82,7 +88,7 @@ export async function* callAnthropicStream(
       },
       body: JSON.stringify({
         model,
-        max_tokens: opts.maxTokens ?? 4096,
+        max_tokens: opts.maxTokens ?? MAX_OUTPUT_TOKENS,
         system,
         stream: true,
         messages: [{ role: "user", content: user }],
@@ -149,7 +155,7 @@ export async function callOpenAI(
       body: JSON.stringify({
         model,
         reasoning_effort: process.env.OPENAI_REASONING_EFFORT || "high",
-        max_completion_tokens: opts.maxTokens ?? 4096,
+        max_completion_tokens: opts.maxTokens ?? MAX_OUTPUT_TOKENS,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -184,7 +190,7 @@ export async function callPerplexity(
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify({
         model,
-        max_tokens: opts.maxTokens ?? 4096,
+        max_tokens: opts.maxTokens ?? PERPLEXITY_MAX_TOKENS,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -205,6 +211,43 @@ export async function callPerplexity(
         ? data.search_results.map((r: { url?: string }) => r.url).filter(Boolean)
         : []);
     return { name, model, ok: !!text, text, citations, error: text ? undefined : "empty response", ms: ms(start) };
+  } catch (e) {
+    return { name, model, ok: false, text: "", error: e instanceof Error ? e.message : "unknown error", ms: ms(start) };
+  }
+}
+
+// DeepSeek (OpenAI-compatible). Defaults to deepseek-v4-pro. Only runs when
+// DEEPSEEK_API_KEY is set; otherwise fails soft and is filtered out.
+export async function callDeepSeek(
+  system: string,
+  user: string,
+  opts: { model?: string; maxTokens?: number; name?: string } = {}
+): Promise<ModelResult> {
+  const model = opts.model || process.env.DEEPSEEK_MODEL || "deepseek-v4-pro";
+  const name = opts.name || "DeepSeek";
+  const key = process.env.DEEPSEEK_API_KEY;
+  const start = Date.now();
+  if (!key) return { name, model, ok: false, text: "", error: "DEEPSEEK_API_KEY not set", ms: 0 };
+  try {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        max_tokens: opts.maxTokens ?? MAX_OUTPUT_TOKENS,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data?.error?.message || `HTTP ${res.status}`;
+      return { name, model, ok: false, text: "", error: msg, ms: ms(start) };
+    }
+    const text = (data?.choices?.[0]?.message?.content ?? "").toString().trim();
+    return { name, model, ok: !!text, text, error: text ? undefined : "empty response", ms: ms(start) };
   } catch (e) {
     return { name, model, ok: false, text: "", error: e instanceof Error ? e.message : "unknown error", ms: ms(start) };
   }

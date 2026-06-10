@@ -450,7 +450,7 @@ export default function Home() {
             </button>
             <button
               onClick={() => setMode("agent")}
-              title="Agent uses tools (vault search, web search, fetch pages) to research before answering."
+              title="Agent uses tools (vault search, web search, fetch any website incl. competitors) to research before answering."
               className={`rounded-md px-2.5 py-1 transition-colors ${
                 mode === "agent" ? "bg-[#1e3a5f] text-white" : "text-[#8aa0bb] hover:text-[#cdd9e8]"
               }`}
