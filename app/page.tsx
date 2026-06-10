@@ -15,7 +15,14 @@ import {
   downloadText,
   downloadJson,
 } from "@/lib/export";
-import { DEFAULT_SETTINGS, DEFAULT_CONNECTORS, type Project, type Settings } from "@/lib/uiTypes";
+import {
+  DEFAULT_SETTINGS,
+  DEFAULT_CONNECTORS,
+  DEPTHS,
+  type Depth,
+  type Project,
+  type Settings,
+} from "@/lib/uiTypes";
 
 type Role = "user" | "assistant";
 type Msg = { role: Role; content: string; ts: number; debug?: string; id?: string };
@@ -86,6 +93,7 @@ export default function Home() {
         st = {
           globalInstructions: p.globalInstructions ?? "",
           connectors: { ...DEFAULT_CONNECTORS, ...(p.connectors || {}) },
+          depth: p.depth ?? "thinking",
         };
       }
     } catch {}
@@ -281,6 +289,7 @@ export default function Home() {
           mode,
           instructions: combinedInstructions,
           connectors: settings.connectors,
+          depth: settings.depth,
         }),
       });
       if (!res.body) throw new Error("No response stream");
@@ -514,25 +523,39 @@ export default function Home() {
           <span className="hidden sm:inline text-xs text-[#5b6b80] truncate">
             {activeProject ? activeProject.name : "Noonan"} · grounded in your knowledge base
           </span>
-          <div className="ml-auto flex items-center rounded-lg border border-[#243449] p-0.5 text-xs">
-            <button
-              onClick={() => setMode("team")}
-              title="Three models (GPT-5.5 + Claude + Perplexity) fan out and a synthesiser merges them."
-              className={`rounded-md px-2.5 py-1 transition-colors ${
-                mode === "team" ? "bg-[#1e3a5f] text-white" : "text-[#8aa0bb] hover:text-[#cdd9e8]"
-              }`}
+          <div className="ml-auto flex items-center gap-2 text-xs">
+            <select
+              value={settings.depth}
+              onChange={(e) => setSettings((s) => ({ ...s, depth: e.target.value as Depth }))}
+              title={DEPTHS.find((d) => d.id === settings.depth)?.hint}
+              className="rounded-lg border border-[#243449] bg-[#0d1622] px-2 py-1.5 text-[#cdd9e8] outline-none hover:border-[#2b6fb3] cursor-pointer"
             >
-              Team
-            </button>
-            <button
-              onClick={() => setMode("agent")}
-              title="Agent uses tools (vault search, web search, fetch any website incl. competitors) to research before answering."
-              className={`rounded-md px-2.5 py-1 transition-colors ${
-                mode === "agent" ? "bg-[#1e3a5f] text-white" : "text-[#8aa0bb] hover:text-[#cdd9e8]"
-              }`}
-            >
-              Agent
-            </button>
+              {DEPTHS.map((d) => (
+                <option key={d.id} value={d.id} className="bg-[#0d1622]">
+                  {d.label}
+                </option>
+              ))}
+            </select>
+            <div className="flex items-center rounded-lg border border-[#243449] p-0.5">
+              <button
+                onClick={() => setMode("team")}
+                title="Three models (GPT-5.5 + Claude + Perplexity) fan out and a synthesiser merges them."
+                className={`rounded-md px-2.5 py-1 transition-colors ${
+                  mode === "team" ? "bg-[#1e3a5f] text-white" : "text-[#8aa0bb] hover:text-[#cdd9e8]"
+                }`}
+              >
+                Team
+              </button>
+              <button
+                onClick={() => setMode("agent")}
+                title="Agent uses tools (vault search, web search, fetch any website incl. competitors) to research before answering."
+                className={`rounded-md px-2.5 py-1 transition-colors ${
+                  mode === "agent" ? "bg-[#1e3a5f] text-white" : "text-[#8aa0bb] hover:text-[#cdd9e8]"
+                }`}
+              >
+                Agent
+              </button>
+            </div>
           </div>
         </header>
 

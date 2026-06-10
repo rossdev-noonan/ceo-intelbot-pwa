@@ -1,7 +1,7 @@
 import { callAnthropicStream } from "@/lib/models";
 import { AGENT_SYSTEM, AGENT_SYNTH_SYSTEM, withInstructions } from "@/lib/prompts";
 import { toolsFor, runTool, toolLabel } from "@/lib/tools";
-import type { StreamEvent, BrainOptions } from "@/lib/brain";
+import { resolveDepth, type StreamEvent, type BrainOptions } from "@/lib/brain";
 
 const ANTHROPIC_VERSION = "2023-06-01";
 const MAX_STEPS = 8; // allow thorough multi-page / multi-source research
@@ -131,7 +131,8 @@ export async function* agentStream(
 
   const gen = callAnthropicStream(
     withInstructions(AGENT_SYNTH_SYSTEM, opts.instructions),
-    synthUser
+    synthUser,
+    { effort: (opts.reasoning ?? resolveDepth("thinking")).claudeEffort }
   );
   let acc = "";
   let result: { ok: boolean; error?: string } = { ok: true };

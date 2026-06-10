@@ -19,7 +19,28 @@ export type BrainResult = {
 // Connector configuration + custom instructions, sent per-request from the UI.
 export type Connectors = { web: boolean; fetch: boolean; vaultDepth: number };
 export const DEFAULT_CONNECTORS: Connectors = { web: true, fetch: true, vaultDepth: 8 };
-export type BrainOptions = { instructions?: string; connectors?: Connectors };
+
+// Reasoning depth (like ChatGPT's Instant/Thinking/Pro). Maps to OpenAI
+// reasoning_effort and Anthropic extended-thinking budget.
+export type Depth = "instant" | "thinking" | "pro";
+export type ReasoningConfig = { openaiEffort: string; claudeEffort: string };
+export function resolveDepth(depth?: string): ReasoningConfig {
+  switch (depth) {
+    case "instant":
+      return { openaiEffort: "low", claudeEffort: "low" };
+    case "pro":
+      return { openaiEffort: "xhigh", claudeEffort: "xhigh" };
+    case "thinking":
+    default:
+      return { openaiEffort: "high", claudeEffort: "high" };
+  }
+}
+
+export type BrainOptions = {
+  instructions?: string;
+  connectors?: Connectors;
+  reasoning?: ReasoningConfig;
+};
 
 type Turn = { role: string; content: string };
 
@@ -75,12 +96,12 @@ async function fanOut(
   const analyst = withInstructions(ANALYST_SYSTEM, opts.instructions);
   const research = withInstructions(RESEARCH_SYSTEM, opts.instructions);
   const web = opts.connectors?.web ?? true;
-  // Full potential: each analyst runs at its strongest (reasoning high via env
-  // default, full output budget). The synthesiser then produces the definitive
-  // answer from all drafts + the full source note.
+  const r = opts.reasoning ?? resolveDepth("thinking");
+  // Each analyst runs at the selected depth: GPT-5.5 reasoning_effort, Claude
+  // extended thinking. The synthesiser then produces the definitive answer.
   const calls = [
-    callOpenAI(analyst, analystUser),
-    callAnthropic(analyst, analystUser),
+    callOpenAI(analyst, analystUser, { reasoningEffort: r.openaiEffort }),
+    callAnthropic(analyst, analystUser, { effort: r.claudeEffort }),
     ...(web ? [callPerplexity(research, researchUser)] : []),
   ];
   return Promise.all(calls);
@@ -132,7 +153,7 @@ export async function answer(
   const synth = await callAnthropic(
     withInstructions(SYNTH_SYSTEM, opts.instructions),
     buildSynthUser(kb, fullBlock, ok, question),
-    { name: "Synthesiser" }
+    { name: "Synthesiser", effort: (opts.reasoning ?? resolveDepth("thinking")).claudeEffort }
   );
   modelStatus.push({ name: synth.name, ok: synth.ok, ms: synth.ms, error: synth.error });
   const finalAnswer = synth.ok && synth.text ? synth.text : ok[0].text;
@@ -201,10 +222,13 @@ export async function* answerStream(
     return;
   }
 
-  yield { type: "status", stage: "Synthesising the answer…" };
+  const r = opts.reasoning ?? resolveDepth("thinking");
+  const deep = r.claudeEffort === "high" || r.claudeEffort === "xhigh" || r.claudeEffort === "max";
+  yield { type: "status", stage: deep ? "Thinking deeply…" : "Synthesising the answer…" };
   const gen = callAnthropicStream(
     withInstructions(SYNTH_SYSTEM, opts.instructions),
-    buildSynthUser(kb, fullBlock, ok, question)
+    buildSynthUser(kb, fullBlock, ok, question),
+    { effort: r.claudeEffort }
   );
   let acc = "";
   let result: { ok: boolean; error?: string } = { ok: true };

@@ -24,16 +24,30 @@ function ms(start: number): number {
   return Date.now() - start;
 }
 
+// Claude Opus 4.8 uses adaptive thinking controlled by output_config.effort
+// (low|medium|high|xhigh|max). High-effort runs need extra max_tokens headroom
+// because thinking tokens count toward the limit.
+function anthropicThinking(effort?: string): { body: object; maxBump: number } {
+  if (!effort) return { body: {}, maxBump: 0 };
+  const big = effort === "high" || effort === "xhigh" || effort === "max";
+  return {
+    body: { thinking: { type: "adaptive" }, output_config: { effort } },
+    maxBump: big ? 16000 : 0,
+  };
+}
+
 export async function callAnthropic(
   system: string,
   user: string,
-  opts: { model?: string; maxTokens?: number; name?: string } = {}
+  opts: { model?: string; maxTokens?: number; name?: string; effort?: string } = {}
 ): Promise<ModelResult> {
   const model = opts.model || process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
   const name = opts.name || "Claude Opus";
   const key = process.env.ANTHROPIC_API_KEY;
   const start = Date.now();
   if (!key) return { name, model, ok: false, text: "", error: "ANTHROPIC_API_KEY not set", ms: 0 };
+  const think = anthropicThinking(opts.effort);
+  const maxTokens = (opts.maxTokens ?? MAX_OUTPUT_TOKENS) + think.maxBump;
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -44,8 +58,9 @@ export async function callAnthropic(
       },
       body: JSON.stringify({
         model,
-        max_tokens: opts.maxTokens ?? MAX_OUTPUT_TOKENS,
+        max_tokens: maxTokens,
         system,
+        ...think.body,
         messages: [{ role: "user", content: user }],
       }),
     });
@@ -71,11 +86,13 @@ export async function callAnthropic(
 export async function* callAnthropicStream(
   system: string,
   user: string,
-  opts: { model?: string; maxTokens?: number } = {}
+  opts: { model?: string; maxTokens?: number; effort?: string } = {}
 ): AsyncGenerator<string, { ok: boolean; error?: string }, unknown> {
   const model = opts.model || process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return { ok: false, error: "ANTHROPIC_API_KEY not set" };
+  const think = anthropicThinking(opts.effort);
+  const maxTokens = (opts.maxTokens ?? MAX_OUTPUT_TOKENS) + think.maxBump;
 
   let res: Response;
   try {
@@ -88,9 +105,10 @@ export async function* callAnthropicStream(
       },
       body: JSON.stringify({
         model,
-        max_tokens: opts.maxTokens ?? MAX_OUTPUT_TOKENS,
+        max_tokens: maxTokens,
         system,
         stream: true,
+        ...think.body,
         messages: [{ role: "user", content: user }],
       }),
     });

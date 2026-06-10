@@ -1,4 +1,4 @@
-import { answerStream, type StreamEvent, type Connectors } from "@/lib/brain";
+import { answerStream, resolveDepth, type StreamEvent, type Connectors } from "@/lib/brain";
 import { agentStream } from "@/lib/agent";
 import { checkSensitivity, sensitivityRefusal } from "@/lib/sensitivity";
 
@@ -12,6 +12,7 @@ type Body = {
   mode?: "team" | "agent";
   instructions?: string;
   connectors?: Connectors;
+  depth?: "instant" | "thinking" | "pro";
 };
 
 // Streams NDJSON events: {type:"status"|"sources"|"delta"|"done"|"error", ...}
@@ -72,7 +73,11 @@ export async function POST(req: Request) {
     return streamReply(sensitivityRefusal(sens.categories), `blocked: sensitivity gate (${sens.categories.join(", ")})`);
   }
 
-  const opts = { instructions: body.instructions, connectors: body.connectors };
+  const opts = {
+    instructions: body.instructions,
+    connectors: body.connectors,
+    reasoning: resolveDepth(body.depth),
+  };
   const events =
     body.mode === "agent"
       ? agentStream(message, body.history, opts)
