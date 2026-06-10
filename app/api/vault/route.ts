@@ -1,4 +1,5 @@
 import { ensureIndex, getVaultStats, searchVault } from "@/lib/vault";
+import { requireUser } from "@/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -6,6 +7,9 @@ export const dynamic = "force-dynamic";
 //   GET /api/vault            -> index stats (file/chunk counts)
 //   GET /api/vault?q=arrears  -> stats + top matching chunks for the query
 export async function GET(req: Request) {
+  const gate = await requireUser();
+  if (!gate.ok) return new Response("Unauthorized", { status: 401 });
+
   const { searchParams } = new URL(req.url);
   const q = (searchParams.get("q") ?? "").trim();
 

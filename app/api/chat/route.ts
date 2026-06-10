@@ -1,6 +1,7 @@
 import { answerStream, type StreamEvent, type Connectors } from "@/lib/brain";
 import { agentStream } from "@/lib/agent";
 import { checkSensitivity, sensitivityRefusal } from "@/lib/sensitivity";
+import { requireUser } from "@/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 600; // long, complete answers can take several minutes
@@ -17,6 +18,10 @@ type Body = {
 
 // Streams NDJSON events: {type:"status"|"sources"|"delta"|"done"|"error", ...}
 export async function POST(req: Request) {
+  // Hard authorization gate — no anonymous access to the brain.
+  const gate = await requireUser();
+  if (!gate.ok) return new Response("Unauthorized", { status: 401 });
+
   let body: Body = {};
   try {
     body = (await req.json()) as Body;
