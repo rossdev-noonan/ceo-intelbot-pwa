@@ -10,6 +10,14 @@ export const VAULT_PATH =
 // Folders we never index — Obsidian internals, version control, trash.
 const SKIP_DIRS = new Set([".obsidian", ".trash", ".git", "node_modules"]);
 
+// Text-based file types we index directly (read as UTF-8). PDFs are handled
+// separately. Anything else (images, office binaries) is skipped.
+const TEXT_EXTS = new Set([
+  ".md", ".markdown", ".txt", ".text", ".csv", ".tsv", ".json", ".jsonl",
+  ".canvas", ".base", ".html", ".htm", ".xml", ".yaml", ".yml", ".log", ".ini", ".cfg",
+]);
+const MAX_TEXT_BYTES = 8 * 1024 * 1024; // skip pathologically large text files
+
 const MAX_CHUNK_CHARS = 1400; // ~350 tokens; splits big sections into windows
 const STOPWORDS = new Set(
   ("the a an and or but of to in on at for with by from as is are was were be " +
@@ -41,7 +49,7 @@ type VaultIndex = {
   signature: string; // file count + newest mtime; rebuild when it changes
   builtAt: number;
   fileCount: number;
-  mdCount: number;
+  textCount: number;
   pdfCount: number;
   chunks: IndexedChunk[];
   df: Map<string, number>; // term -> number of chunks containing it
@@ -81,7 +89,8 @@ function walkFiles(dir: string, out: string[] = []): string[] {
       walkFiles(path.join(dir, e.name), out);
     } else if (e.isFile()) {
       const lower = e.name.toLowerCase();
-      if (lower.endsWith(".md") || lower.endsWith(".pdf")) {
+      const ext = lower.slice(lower.lastIndexOf("."));
+      if (lower.endsWith(".pdf") || TEXT_EXTS.has(ext)) {
         out.push(path.join(dir, e.name));
       }
     }
@@ -218,7 +227,7 @@ async function buildIndex(): Promise<VaultIndex> {
   const chunks: IndexedChunk[] = [];
   const df = new Map<string, number>();
   let totalLen = 0;
-  let mdCount = 0;
+  let textCount = 0;
   let pdfCount = 0;
 
   // Index one chunk: tokenise (title + heading + body) and update df/avgLen.
@@ -259,14 +268,20 @@ async function buildIndex(): Promise<VaultIndex> {
       for (const c of chunkPdf(rel, entry.pages)) addChunk(c);
       pdfCount++;
     } else {
+      try {
+        if (fs.statSync(abs).size > MAX_TEXT_BYTES) continue;
+      } catch {
+        continue;
+      }
       let raw = "";
       try {
         raw = fs.readFileSync(abs, "utf8");
       } catch {
         continue;
       }
-      for (const c of chunkNote(rel, stripFrontmatter(raw))) addChunk(c);
-      mdCount++;
+      const isMd = /\.(md|markdown)$/i.test(abs);
+      for (const c of chunkNote(rel, isMd ? stripFrontmatter(raw) : raw)) addChunk(c);
+      textCount++;
     }
   }
 
@@ -276,7 +291,7 @@ async function buildIndex(): Promise<VaultIndex> {
     signature,
     builtAt: Date.now(),
     fileCount: files.length,
-    mdCount,
+    textCount,
     pdfCount,
     chunks,
     df,
@@ -310,7 +325,7 @@ export async function getVaultStats() {
     vaultPath: VAULT_PATH,
     exists: fs.existsSync(VAULT_PATH),
     fileCount: idx.fileCount,
-    mdCount: idx.mdCount,
+    textCount: idx.textCount,
     pdfCount: idx.pdfCount,
     chunkCount: idx.chunks.length,
     vocabulary: idx.df.size,

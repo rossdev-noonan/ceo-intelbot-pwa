@@ -4,7 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import Markdown from "@/components/Markdown";
 import SettingsModal from "@/components/SettingsModal";
 import ProjectModal from "@/components/ProjectModal";
-import { downloadMarkdown, downloadCsv, markdownTablesToCsv, printAnswer } from "@/lib/export";
+import {
+  downloadMarkdown,
+  downloadCsv,
+  markdownTablesToCsv,
+  printAnswer,
+  downloadHtml,
+  downloadWord,
+  downloadExcel,
+  downloadText,
+  downloadJson,
+} from "@/lib/export";
 import { DEFAULT_SETTINGS, DEFAULT_CONNECTORS, type Project, type Settings } from "@/lib/uiTypes";
 
 type Role = "user" | "assistant";
@@ -28,8 +38,6 @@ function uid() {
 
 const EXPORT_BTN =
   "rounded-md border border-[#243449] px-2 py-1 text-[#8aa0bb] hover:bg-[#13202f] hover:text-[#cdd9e8] transition-colors";
-const EXPORT_BTN_OFF =
-  "rounded-md border border-[#1c2838] px-2 py-1 text-[#42536b] cursor-not-allowed";
 
 export default function Home() {
   const [chats, setChats] = useState<Chat[]>([]);
@@ -47,6 +55,15 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectModal, setProjectModal] = useState<{ project: Project; isNew: boolean } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-grow the composer so long queries are fully visible (no input cap).
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.5)) + "px";
+  }, [input]);
 
   // Load projects, settings, and chats (with migration to the project model).
   useEffect(() => {
@@ -307,6 +324,35 @@ export default function Home() {
     }
   }
 
+  function getMsgEl(id?: string): HTMLElement | null {
+    return id ? (document.querySelector(`[data-msg-id="${id}"]`) as HTMLElement | null) : null;
+  }
+  function getTables(el: HTMLElement | null): string[] {
+    if (!el) return [];
+    return [...el.querySelectorAll("table")].map((t) => t.outerHTML);
+  }
+  function menuItem(
+    label: string,
+    onClick: (e: React.MouseEvent<HTMLButtonElement>) => void,
+    disabled = false
+  ) {
+    return (
+      <button
+        key={label}
+        disabled={disabled}
+        onClick={(e) => {
+          onClick(e);
+          (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+        }}
+        className={`block w-full text-left rounded px-2 py-1.5 ${
+          disabled ? "text-[#42536b] cursor-not-allowed" : "text-[#cdd9e8] hover:bg-[#16263a]"
+        }`}
+      >
+        {label}
+      </button>
+    );
+  }
+
   function chatRow(c: Chat) {
     return (
       <div
@@ -484,42 +530,52 @@ export default function Home() {
                 </div>
                 {m.role === "assistant" &&
                   m.content &&
-                  !(loading && i === (active?.messages.length ?? 0) - 1) && (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5 text-xs">
-                      {(() => {
-                        const q = active?.messages[i - 1]?.content;
-                        const title = (q || active?.title || "intelbot-answer").slice(0, 60);
-                        const hasTables = markdownTablesToCsv(m.content) !== null;
-                        return (
-                          <>
-                            <button className={EXPORT_BTN} onClick={() => navigator.clipboard?.writeText(m.content)}>
-                              Copy
-                            </button>
-                            <button className={EXPORT_BTN} onClick={() => downloadMarkdown(m.content, title)}>
-                              ⬇ Markdown
-                            </button>
-                            <button
-                              className={hasTables ? EXPORT_BTN : EXPORT_BTN_OFF}
-                              disabled={!hasTables}
-                              title={hasTables ? "Export tables as CSV" : "No tables in this answer"}
-                              onClick={() => downloadCsv(m.content, title)}
-                            >
-                              ⬇ CSV
-                            </button>
-                            <button
-                              className={EXPORT_BTN}
-                              onClick={() => {
-                                const el = m.id ? document.querySelector(`[data-msg-id="${m.id}"]`) : null;
-                                if (el) printAnswer(el.innerHTML, title, q);
-                              }}
-                            >
-                              ⬇ PDF
-                            </button>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  )}
+                  !(loading && i === (active?.messages.length ?? 0) - 1) &&
+                  (() => {
+                    const q = active?.messages[i - 1]?.content;
+                    const title = (q || active?.title || "intelbot-answer").slice(0, 60);
+                    const hasTables = markdownTablesToCsv(m.content) !== null;
+                    return (
+                      <div className="mt-1.5 flex items-center gap-1.5 text-xs">
+                        <button className={EXPORT_BTN} onClick={() => navigator.clipboard?.writeText(m.content)}>
+                          Copy
+                        </button>
+                        <details className="relative">
+                          <summary
+                            className={`${EXPORT_BTN} cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden`}
+                          >
+                            ⬇ Download
+                          </summary>
+                          <div className="absolute z-20 mt-1 w-40 rounded-lg border border-[#243449] bg-[#0d1622] p-1 shadow-xl">
+                            {menuItem("PDF", () => {
+                              const el = getMsgEl(m.id);
+                              if (el) printAnswer(el.innerHTML, title, q);
+                            })}
+                            {menuItem("Word (.doc)", () => {
+                              const el = getMsgEl(m.id);
+                              if (el) downloadWord(el.innerHTML, title, q);
+                            })}
+                            {menuItem(
+                              "Excel (.xls)",
+                              () => downloadExcel(getTables(getMsgEl(m.id)), title),
+                              !hasTables
+                            )}
+                            {menuItem("HTML", () => {
+                              const el = getMsgEl(m.id);
+                              if (el) downloadHtml(el.innerHTML, title, q);
+                            })}
+                            {menuItem("Markdown (.md)", () => downloadMarkdown(m.content, title))}
+                            {menuItem("Text (.txt)", () => {
+                              const el = getMsgEl(m.id);
+                              downloadText(el ? el.innerText : m.content, title);
+                            })}
+                            {menuItem("CSV", () => downloadCsv(m.content, title), !hasTables)}
+                            {menuItem("JSON", () => downloadJson(m.content, title, q))}
+                          </div>
+                        </details>
+                      </div>
+                    );
+                  })()}
                 {m.debug && (
                   <div className="mt-1 max-w-[90%] rounded-md bg-[#0b121c] border border-[#1c2838] px-3 py-2 text-[10px] font-mono text-[#7a8da3] whitespace-pre-wrap break-all">
                     {m.debug}
@@ -542,12 +598,13 @@ export default function Home() {
         <div className="border-t border-[#1c2838] p-3">
           <div className="max-w-3xl mx-auto w-full flex items-end gap-2">
             <textarea
+              ref={taRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKey}
               rows={1}
-              placeholder="Message IntelBot…"
-              className="flex-1 resize-none rounded-xl bg-[#0f1825] border border-[#2a3a52] px-4 py-3 text-sm outline-none focus:border-[#4a90d9] max-h-40"
+              placeholder="Message IntelBot…  (Shift+Enter for a new line — no length limit)"
+              className="flex-1 resize-none rounded-xl bg-[#0f1825] border border-[#2a3a52] px-4 py-3 text-sm outline-none focus:border-[#4a90d9] max-h-[50vh] overflow-y-auto"
             />
             <button
               onClick={send}

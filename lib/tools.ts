@@ -150,7 +150,7 @@ export async function runTool(name: string, input: ToolInput): Promise<string> {
     const s = await getVaultStats();
     const files = listFiles();
     return (
-      `Knowledge base: ${s.fileCount} files (${s.mdCount} markdown notes, ${s.pdfCount} legislation PDFs), ${s.chunkCount} indexed sections.\n\n` +
+      `Knowledge base: ${s.fileCount} files (${s.textCount} text/markdown, ${s.pdfCount} PDFs), ${s.chunkCount} indexed sections.\n\n` +
       `Files:\n${files.join("\n")}`
     );
   }

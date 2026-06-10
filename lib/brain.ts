@@ -4,7 +4,6 @@ import {
   callAnthropicStream,
   callOpenAI,
   callPerplexity,
-  callDeepSeek,
   type ModelResult,
 } from "@/lib/models";
 import { ANALYST_SYSTEM, RESEARCH_SYSTEM, SYNTH_SYSTEM, withInstructions } from "@/lib/prompts";
@@ -69,7 +68,6 @@ async function fanOut(
   const calls = [
     callOpenAI(analyst, analystUser),
     callAnthropic(analyst, analystUser),
-    ...(process.env.DEEPSEEK_API_KEY ? [callDeepSeek(analyst, analystUser)] : []),
     ...(web ? [callPerplexity(research, researchUser)] : []),
   ];
   return Promise.all(calls);
