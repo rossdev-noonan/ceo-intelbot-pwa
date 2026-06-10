@@ -65,6 +65,7 @@ export default function Home() {
   const [projectModal, setProjectModal] = useState<{ project: Project; isNew: boolean } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-grow the composer so long queries are fully visible (no input cap).
   useEffect(() => {
@@ -93,7 +94,7 @@ export default function Home() {
         st = {
           globalInstructions: p.globalInstructions ?? "",
           connectors: { ...DEFAULT_CONNECTORS, ...(p.connectors || {}) },
-          depth: p.depth ?? "thinking",
+          depth: p.depth ?? "auto",
         };
       }
     } catch {}
@@ -151,13 +152,14 @@ export default function Home() {
     .join("\n\n");
 
   // Pin a question near the top of the view (ChatGPT-style) so it stays visible
-  // while the answer streams below it. Instant + double-rAF so it lands reliably.
-  function scrollQuestionToTop(id: string, smooth = false) {
+  // while the answer streams below it. Sets scrollTop directly on the container
+  // (reliable — scrollIntoView fought the streaming re-renders).
+  function scrollQuestionToTop(id: string) {
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
-        document
-          .querySelector(`[data-msg-id="${id}"]`)
-          ?.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+        const container = scrollRef.current;
+        const el = container?.querySelector(`[data-msg-id="${id}"]`) as HTMLElement | null;
+        if (container && el) container.scrollTop = Math.max(0, el.offsetTop - 12);
       })
     );
   }
@@ -559,7 +561,7 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto w-full px-4 py-6 space-y-6">
             {active && active.messages.length === 0 && !activeLoading && (
               <div className="text-center text-[#5b6b80] mt-20">

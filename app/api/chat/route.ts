@@ -1,4 +1,4 @@
-import { answerStream, resolveDepth, type StreamEvent, type Connectors } from "@/lib/brain";
+import { answerStream, type StreamEvent, type Connectors } from "@/lib/brain";
 import { agentStream } from "@/lib/agent";
 import { checkSensitivity, sensitivityRefusal } from "@/lib/sensitivity";
 
@@ -12,7 +12,7 @@ type Body = {
   mode?: "team" | "agent";
   instructions?: string;
   connectors?: Connectors;
-  depth?: "instant" | "thinking" | "pro";
+  depth?: "auto" | "instant" | "thinking" | "pro";
 };
 
 // Streams NDJSON events: {type:"status"|"sources"|"delta"|"done"|"error", ...}
@@ -76,7 +76,7 @@ export async function POST(req: Request) {
   const opts = {
     instructions: body.instructions,
     connectors: body.connectors,
-    reasoning: resolveDepth(body.depth),
+    depth: body.depth,
   };
   const events =
     body.mode === "agent"
