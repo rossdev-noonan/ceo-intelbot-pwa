@@ -4,7 +4,6 @@ import {
   callAnthropicStream,
   callOpenAI,
   callPerplexity,
-  ANALYST_MAX_TOKENS,
   type ModelResult,
 } from "@/lib/models";
 import { ANALYST_SYSTEM, RESEARCH_SYSTEM, SYNTH_SYSTEM, withInstructions } from "@/lib/prompts";
@@ -76,9 +75,12 @@ async function fanOut(
   const analyst = withInstructions(ANALYST_SYSTEM, opts.instructions);
   const research = withInstructions(RESEARCH_SYSTEM, opts.instructions);
   const web = opts.connectors?.web ?? true;
+  // Full potential: each analyst runs at its strongest (reasoning high via env
+  // default, full output budget). The synthesiser then produces the definitive
+  // answer from all drafts + the full source note.
   const calls = [
-    callOpenAI(analyst, analystUser, { maxTokens: ANALYST_MAX_TOKENS, reasoningEffort: "low" }),
-    callAnthropic(analyst, analystUser, { maxTokens: ANALYST_MAX_TOKENS }),
+    callOpenAI(analyst, analystUser),
+    callAnthropic(analyst, analystUser),
     ...(web ? [callPerplexity(research, researchUser)] : []),
   ];
   return Promise.all(calls);

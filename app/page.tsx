@@ -142,15 +142,26 @@ export default function Home() {
     .filter(Boolean)
     .join("\n\n");
 
-  // Pin a freshly-asked question near the top of the view (ChatGPT-style) so it
-  // stays visible while the answer streams below it.
-  function scrollQuestionToTop(id: string) {
-    setTimeout(() => {
-      document
-        .querySelector(`[data-msg-id="${id}"]`)
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 60);
+  // Pin a question near the top of the view (ChatGPT-style) so it stays visible
+  // while the answer streams below it. Instant + double-rAF so it lands reliably.
+  function scrollQuestionToTop(id: string, smooth = false) {
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-msg-id="${id}"]`)
+          ?.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+      })
+    );
   }
+
+  // When switching INTO a chat, bring its latest question to the top so the view
+  // reads as a conversation (question above answer), not just a wall of answer.
+  useEffect(() => {
+    if (!active) return;
+    const lastUser = [...active.messages].reverse().find((m) => m.role === "user");
+    if (lastUser?.id) scrollQuestionToTop(lastUser.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
 
   function newChat(projectId?: string) {
     const pid = projectId ?? activeProject?.id ?? projects[0]?.id;

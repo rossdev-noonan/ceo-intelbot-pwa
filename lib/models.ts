@@ -19,11 +19,6 @@ const ANTHROPIC_VERSION = "2023-06-01";
 // model-driven. Perplexity is capped lower (it feeds the synthesiser).
 export const MAX_OUTPUT_TOKENS = Number(process.env.MAX_OUTPUT_TOKENS) || 16000;
 const PERPLEXITY_MAX_TOKENS = Math.min(MAX_OUTPUT_TOKENS, 8000);
-// Analysts feed the synthesiser, so they run with a tighter ceiling to keep the
-// fan-out fast; the synthesiser (streamed) produces the full-length answer.
-// Reasoning models need headroom (reasoning tokens count against the cap), so
-// keep this comfortably above the visible-output budget.
-export const ANALYST_MAX_TOKENS = Number(process.env.ANALYST_MAX_TOKENS) || 5000;
 
 function ms(start: number): number {
   return Date.now() - start;
