@@ -3,22 +3,22 @@
 /* ---- Theme tokens. Dark is default; `.light` on <html> switches to light. ---- */
 :root {
   color-scheme: dark;
-  --bg: #0a0d13;          /* page / chat area (darker, ChatGPT-like) */
-  --sidebar: #0a0d13;     /* sidebar */
-  --panel: #14171f;       /* modals / popovers */
-  --surface: #181b22;     /* bubbles, composer, inputs */
-  --surface-2: #0f1219;   /* code / debug */
-  --border: #262a33;
-  --border-2: #343a45;
-  --hover: #1e2229;
+  --bg: #0a0a0c;          /* page / chat area — near-black, ChatGPT-dark */
+  --sidebar: #0f0f12;     /* sidebar — a subtle lift so no border is needed */
+  --panel: #17181c;       /* modals / popovers */
+  --surface: #1c1d22;     /* composer pill, user bubble, inputs */
+  --surface-2: #121216;   /* code / debug */
+  --border: #25262c;
+  --border-2: #34353d;
+  --hover: #1d1e24;
   --accent: #2b6fb3;
   --accent-hover: #357ec7;
-  --user-bubble: #1e3a5f;
+  --user-bubble: #1f3a5c;
   --accent-text: #6db3f2;
-  --text-strong: #ececf1;
-  --text: #c7cdd6;
-  --muted: #8a93a3;
-  --muted-2: #646c7a;
+  --text-strong: #f2f2f5;
+  --text: #d3d6dd;
+  --muted: #9aa0ab;
+  --muted-2: #6b707b;
   --danger: #e2728a;
 }
 
@@ -27,7 +27,7 @@ html.light {
   --bg: #ffffff;
   --sidebar: #f7f8fa;
   --panel: #ffffff;
-  --surface: #f4f5f7;
+  --surface: #f3f4f6;
   --surface-2: #eceef1;
   --border: #e4e7eb;
   --border-2: #d6dae0;
@@ -38,8 +38,8 @@ html.light {
   --accent-text: #1a5fb4;
   --text-strong: #0d1117;
   --text: #2a2f3a;
-  --muted: #5b6675;
-  --muted-2: #8a93a3;
+  --muted: #56606e;
+  --muted-2: #828b99;
   --danger: #d6455f;
 }
 

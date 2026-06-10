@@ -27,6 +27,7 @@ function emailOf(p: Record<string, unknown> | null | undefined): string {
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
+  secret: process.env.AUTH_SECRET || "intelbot-dev-secret-change-in-production",
   providers: [MicrosoftEntraID],
   pages: { signIn: "/signin" },
   callbacks: {

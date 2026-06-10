@@ -1,12 +1,9 @@
-import { auth } from "@/auth";
+import { auth, authEnabled } from "@/auth";
 
 // Next 16 renamed Middleware -> Proxy. This is the OPTIMISTIC redirect for UX;
 // the real authorization is enforced server-side inside the protected routes
 // (see requireUser() in auth.ts and the /api/chat guard).
-export default auth((req) => {
-  // Auth disabled (no Entra config, e.g. local dev) — let everything through.
-  if (!process.env.AUTH_MICROSOFT_ENTRA_ID_ID) return;
-
+const guarded = auth((req) => {
   const { pathname } = req.nextUrl;
   const isPublic =
     pathname.startsWith("/signin") ||
@@ -21,6 +18,11 @@ export default auth((req) => {
     return Response.redirect(url);
   }
 });
+
+// Only enforce when M365 SSO is configured; otherwise a no-op (local dev),
+// which also avoids running Auth (and needing AUTH_SECRET) when auth is off.
+const proxy = authEnabled ? guarded : () => undefined;
+export default proxy;
 
 export const config = {
   // Run on everything except Next internals and static assets.

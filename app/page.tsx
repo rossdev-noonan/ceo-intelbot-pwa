@@ -84,6 +84,11 @@ export default function Home() {
     el.style.height = Math.min(el.scrollHeight, 192) + "px"; // matches max-h-48
   }, [input]);
 
+  // Sidebar starts open on desktop, closed on mobile.
+  useEffect(() => {
+    setSidebarOpen(window.innerWidth >= 768);
+  }, []);
+
   // Theme: load saved preference, then apply + persist.
   useEffect(() => {
     const t = localStorage.getItem("intelbot_theme");
@@ -176,13 +181,16 @@ export default function Home() {
   // while the answer streams below it. Sets scrollTop directly on the container
   // (reliable — scrollIntoView fought the streaming re-renders).
   function scrollQuestionToTop(id: string) {
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        const container = scrollRef.current;
-        const el = container?.querySelector(`[data-msg-id="${id}"]`) as HTMLElement | null;
-        if (container && el) container.scrollTop = Math.max(0, el.offsetTop - 12);
-      })
-    );
+    const run = () => {
+      const container = scrollRef.current;
+      const el = container?.querySelector(`[data-msg-id="${id}"]`) as HTMLElement | null;
+      if (container && el) container.scrollTop = Math.max(0, el.offsetTop - 12);
+    };
+    requestAnimationFrame(() => requestAnimationFrame(run));
+    // Fallbacks: the empty→messages layout switch (and streaming re-renders)
+    // can mount the scroll container a tick later.
+    setTimeout(run, 120);
+    setTimeout(run, 350);
   }
 
   // When switching INTO a chat, bring its latest question to the top so the view
@@ -618,8 +626,8 @@ export default function Home() {
       )}
       <aside
         className={`${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        } md:translate-x-0 fixed md:static z-40 h-full w-64 flex flex-col bg-[var(--sidebar)] border-r border-[var(--border)] transition-transform duration-200`}
+          sidebarOpen ? "flex" : "hidden"
+        } fixed md:static z-40 h-full w-64 flex-col bg-[var(--sidebar)]`}
       >
         <div className="p-3 space-y-2">
           <button
@@ -692,9 +700,9 @@ export default function Home() {
       <main className="flex-1 flex flex-col min-w-0">
         <header className="px-3 sm:px-4 py-3 flex items-center gap-2">
           <button
-            onClick={() => setSidebarOpen(true)}
-            className="md:hidden rounded-md px-2 py-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-            title="Menu"
+            onClick={() => setSidebarOpen((o) => !o)}
+            className="rounded-md px-2 py-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+            title="Toggle sidebar"
           >
             ☰
           </button>
