@@ -1,4 +1,4 @@
-import { ensureIndex, searchVault, getVaultStats, listFiles } from "@/lib/vault";
+import { ensureIndex, searchVault, getVaultStats, listFiles, getFileText } from "@/lib/vault";
 import { callPerplexity } from "@/lib/models";
 import { RESEARCH_SYSTEM } from "@/lib/prompts";
 
@@ -22,6 +22,16 @@ export const TOOLS = [
     description:
       "Get knowledge-base statistics (file/PDF counts) and the list of note/legislation file names. Use for meta questions such as how many files exist or what topics are covered.",
     input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "read_note",
+    description:
+      "Read a SPECIFIC knowledge-base file IN FULL by its exact path (from vault_overview or a search result). Use this when the user wants a complete document reproduced, or ALL items/examples/scenarios from a note — not just fragments. Prefer this over many small searches when reproducing a whole note.",
+    input_schema: {
+      type: "object",
+      properties: { file: { type: "string", description: "Exact relative file path, e.g. 'Noonan_Deep_Restructure_Scenario_Pack.md'." } },
+      required: ["file"],
+    },
   },
   {
     name: "web_search",
@@ -64,6 +74,8 @@ export function toolLabel(name: string, input: ToolInput): string {
       return `🔎 Searching the knowledge base: “${String(input.query ?? "")}”`;
     case "vault_overview":
       return "📚 Reviewing the knowledge-base index…";
+    case "read_note":
+      return `📖 Reading note: ${String(input.file ?? "")}`;
     case "web_search":
       return `🌐 Searching the web: “${String(input.query ?? "")}”`;
     case "fetch_url":
@@ -144,6 +156,12 @@ export async function runTool(name: string, input: ToolInput): Promise<string> {
           `[${h.file}${h.heading && h.heading !== h.title ? ` › ${h.heading}` : ""}]\n${h.text}`
       )
       .join("\n\n---\n\n");
+  }
+
+  if (name === "read_note") {
+    await ensureIndex();
+    const text = getFileText(String(input.file ?? ""), 150000);
+    return text || `Note not found or empty: ${String(input.file ?? "")}`;
   }
 
   if (name === "vault_overview") {

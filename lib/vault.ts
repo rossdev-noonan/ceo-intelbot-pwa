@@ -340,6 +340,24 @@ export function listFiles(): string[] {
   return Array.from(new Set(idx.chunks.map((c) => c.file))).sort();
 }
 
+// Full text of a single file (for completeness — reproducing a whole note, not
+// just retrieved fragments). PDFs come from the cached page text.
+export function getFileText(relPath: string, maxChars = 60000): string {
+  const abs = path.join(VAULT_PATH, relPath);
+  try {
+    if (abs.toLowerCase().endsWith(".pdf")) {
+      const entry = loadPdfCache()[relPath];
+      return entry ? entry.pages.join("\n\n").slice(0, maxChars) : "";
+    }
+    if (fs.statSync(abs).size > MAX_TEXT_BYTES) return "";
+    const raw = fs.readFileSync(abs, "utf8");
+    const isMd = /\.(md|markdown)$/i.test(abs);
+    return (isMd ? stripFrontmatter(raw) : raw).slice(0, maxChars);
+  } catch {
+    return "";
+  }
+}
+
 // Authoritative source notes should outrank the bot's own past exports and
 // rough drafts. Folder-based multipliers applied on top of the BM25 score.
 function folderWeight(file: string): number {

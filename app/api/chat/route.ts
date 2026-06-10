@@ -3,7 +3,7 @@ import { agentStream } from "@/lib/agent";
 import { checkSensitivity, sensitivityRefusal } from "@/lib/sensitivity";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // deep answers can take minutes
+export const maxDuration = 600; // long, complete answers can take several minutes
 
 type Body = {
   message?: string;

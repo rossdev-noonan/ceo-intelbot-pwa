@@ -136,11 +136,16 @@ export default function Home() {
     .map((s) => (s ?? "").trim())
     .filter(Boolean)
     .join("\n\n");
-  const lastContent = active?.messages[active.messages.length - 1]?.content;
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [active?.messages.length, loading, lastContent]);
+  // Pin a freshly-asked question near the top of the view (ChatGPT-style) so it
+  // stays visible while the answer streams below it.
+  function scrollQuestionToTop(id: string) {
+    setTimeout(() => {
+      document
+        .querySelector(`[data-msg-id="${id}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  }
 
   function newChat(projectId?: string) {
     const pid = projectId ?? activeProject?.id ?? projects[0]?.id;
@@ -227,6 +232,7 @@ export default function Home() {
     setLoading(true);
     setStreaming(false);
     setStatus(STATUSES[0]);
+    scrollQuestionToTop(userMsg.id!);
 
     let started = false;
     let acc = "";
