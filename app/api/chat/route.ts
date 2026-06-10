@@ -15,6 +15,7 @@ type Body = {
   connectors?: Connectors;
   depth?: "auto" | "instant" | "thinking" | "pro";
   attachment?: { name: string; text: string };
+  images?: string[];
 };
 
 // Streams NDJSON events: {type:"status"|"sources"|"delta"|"done"|"error", ...}
@@ -84,9 +85,11 @@ export async function POST(req: Request) {
     connectors: body.connectors,
     depth: body.depth,
     attachment: body.attachment,
+    images: body.images,
   };
+  // Images need vision — always use the Team/vision path (agent tools can't see images).
   const events =
-    body.mode === "agent"
+    body.mode === "agent" && !body.images?.length
       ? agentStream(message, body.history, opts)
       : answerStream(message, body.history, opts);
 

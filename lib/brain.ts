@@ -4,6 +4,7 @@ import {
   callAnthropicStream,
   callOpenAI,
   callPerplexity,
+  parseDataUrl,
   type ModelResult,
 } from "@/lib/models";
 import {
@@ -52,6 +53,7 @@ export type BrainOptions = {
   connectors?: Connectors;
   depth?: string; // "auto" | "instant" | "thinking" | "pro"
   attachment?: Attachment;
+  images?: string[]; // pasted/attached image data URLs (vision)
 };
 
 type Turn = { role: string; content: string };
@@ -223,6 +225,42 @@ export async function* answerStream(
   yield { type: "status", stage: "Searching the knowledge base…" };
   const prep = await prepare(question, history, opts.connectors?.vaultDepth, opts.attachment);
   yield { type: "sources", sources: prep.sources };
+
+  // Vision path: if images were pasted/attached, send them to Claude Opus (which
+  // can see images) with the question + KB context, and stream the answer.
+  const images = (opts.images ?? []).map(parseDataUrl).filter((x): x is NonNullable<typeof x> => !!x);
+  if (images.length) {
+    yield { type: "status", stage: "Looking at the image…" };
+    const gen = callAnthropicStream(
+      withInstructions(SYNTH_FULL, opts.instructions),
+      `${prep.kb}<user_question>\n${question}\n</user_question>`,
+      { effort: "high", images }
+    );
+    let acc = "";
+    let result: { ok: boolean; error?: string } = { ok: true };
+    while (true) {
+      const step = await gen.next();
+      if (step.done) {
+        result = step.value;
+        break;
+      }
+      acc += step.value;
+      yield { type: "delta", text: step.value };
+    }
+    if (!acc.trim()) acc = `Couldn't analyse the image: ${result.error ?? "no output"}`;
+    if (!result.ok && !acc) yield { type: "delta", text: acc };
+    yield {
+      type: "done",
+      answer: acc,
+      debug: {
+        engines: `vision · claude-opus-4-8 ${result.ok ? "✓" : "✗ " + result.error}`,
+        retrieved: prep.hits.length,
+        sources: prep.sources.map((s) => `[${s.n}] ${s.file}`),
+        totalMs: Date.now() - start,
+      },
+    };
+    return;
+  }
 
   // Pick the model plan — auto classifies; manual forces the full fan-out.
   if (!opts.depth || opts.depth === "auto") {

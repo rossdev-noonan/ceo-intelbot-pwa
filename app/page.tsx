@@ -25,7 +25,7 @@ import {
 } from "@/lib/uiTypes";
 
 type Role = "user" | "assistant";
-type Msg = { role: Role; content: string; ts: number; debug?: string; id?: string; attachmentName?: string };
+type Msg = { role: Role; content: string; ts: number; debug?: string; id?: string; attachmentName?: string; images?: string[] };
 type Attachment = { name: string; text: string };
 type Chat = { id: string; title: string; projectId: string; messages: Msg[] };
 
@@ -66,6 +66,7 @@ export default function Home() {
   const [projectModal, setProjectModal] = useState<{ project: Project; isNew: boolean } | null>(null);
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [attaching, setAttaching] = useState(false);
+  const [images, setImages] = useState<string[]>([]); // pasted/attached image data URLs
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [listening, setListening] = useState(false);
@@ -270,18 +271,22 @@ export default function Home() {
 
   async function send() {
     let text = input.trim();
-    if ((!text && !attachment) || !active || loadingChats[active.id]) return;
-    if (!text && attachment) text = `Please analyse the attached document "${attachment.name}".`;
+    if ((!text && !attachment && !images.length) || !active || loadingChats[active.id]) return;
+    if (!text && images.length) text = "What's in this image?";
+    else if (!text && attachment) text = `Please analyse the attached document "${attachment.name}".`;
     const chatId = active.id; // capture — the user may switch chats mid-stream
     const sentAttachment = attachment;
+    const sentImages = images;
     setInput("");
     setAttachment(null);
+    setImages([]);
     const userMsg: Msg = {
       role: "user",
       content: text,
       ts: Date.now(),
       id: uid(),
       attachmentName: sentAttachment?.name,
+      images: sentImages.length ? sentImages : undefined,
     };
     const assistantId = uid();
     const history = active.messages;
@@ -331,6 +336,7 @@ export default function Home() {
           connectors: settings.connectors,
           depth: settings.depth,
           attachment: sentAttachment ?? undefined,
+          images: sentImages.length ? sentImages : undefined,
         }),
       });
       if (!res.body) throw new Error("No response stream");
@@ -395,6 +401,10 @@ export default function Home() {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-picking the same file
     if (!file) return;
+    if (file.type.startsWith("image/")) {
+      addImageFile(file);
+      return;
+    }
     setAttaching(true);
     try {
       const fd = new FormData();
@@ -408,6 +418,31 @@ export default function Home() {
     } finally {
       setAttaching(false);
     }
+  }
+
+  function addImageFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") setImages((prev) => [...prev, reader.result as string]);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Paste images straight into the chat (Alt+PrtScreen → Ctrl+V, copy-image, etc.).
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    let handled = false;
+    for (const it of items) {
+      if (it.type.startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) {
+          addImageFile(f);
+          handled = true;
+        }
+      }
+    }
+    if (handled) e.preventDefault();
   }
 
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -558,11 +593,28 @@ export default function Home() {
             </span>
           </div>
         )}
+        {images.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {images.map((src, idx) => (
+              <div key={idx} className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={src} alt="attachment" className="h-16 w-16 rounded-lg border border-[var(--border-2)] object-cover" />
+                <button
+                  onClick={() => setImages((prev) => prev.filter((_, i) => i !== idx))}
+                  className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-[var(--panel)] border border-[var(--border-2)] text-[var(--muted)] hover:text-[var(--danger)] text-xs leading-none"
+                  title="Remove image"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <input
           ref={fileRef}
           type="file"
           hidden
-          accept=".pdf,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.log,text/*"
+          accept=".pdf,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.log,text/*,image/*"
           onChange={onPickFile}
         />
         <div className="flex items-end gap-1 rounded-[26px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5">
@@ -586,8 +638,9 @@ export default function Home() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKey}
+            onPaste={onPaste}
             rows={1}
-            placeholder="Message IntelBot…"
+            placeholder="Message IntelBot…  (paste an image to analyse it)"
             className="flex-1 resize-none bg-transparent px-1 py-2 text-sm outline-none max-h-48 overflow-y-auto"
           />
           <button
@@ -601,7 +654,7 @@ export default function Home() {
           </button>
           <button
             onClick={send}
-            disabled={activeLoading || (!input.trim() && !attachment)}
+            disabled={activeLoading || (!input.trim() && !attachment && images.length === 0)}
             title="Send"
             className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-30"
           >
@@ -782,6 +835,14 @@ export default function Home() {
                       const exp = m.id ? expanded[m.id] : false;
                       return (
                         <>
+                          {m.images?.length ? (
+                            <div className="mb-2 flex flex-wrap gap-2">
+                              {m.images.map((src, k) => (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img key={k} src={src} alt="attachment" className="max-h-48 rounded-lg border border-white/20 object-contain" />
+                              ))}
+                            </div>
+                          ) : null}
                           {m.attachmentName && (
                             <div className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-[var(--hover)] px-2 py-1 text-xs text-[var(--accent-text)]">
                               📎 {m.attachmentName}

@@ -24,6 +24,26 @@ function ms(start: number): number {
   return Date.now() - start;
 }
 
+// Parse a "data:image/png;base64,XXXX" URL into the parts the model APIs need.
+export type ImagePart = { mediaType: string; data: string };
+export function parseDataUrl(url: string): ImagePart | null {
+  const m = /^data:([^;]+);base64,(.+)$/.exec(url);
+  if (!m) return null;
+  return { mediaType: m[1], data: m[2] };
+}
+
+// Build an Anthropic user-content array with optional image blocks.
+function anthropicContent(text: string, images?: ImagePart[]) {
+  if (!images?.length) return text;
+  return [
+    { type: "text", text },
+    ...images.map((im) => ({
+      type: "image",
+      source: { type: "base64", media_type: im.mediaType, data: im.data },
+    })),
+  ];
+}
+
 // Claude Opus 4.8 uses adaptive thinking controlled by output_config.effort
 // (low|medium|high|xhigh|max). High-effort runs need extra max_tokens headroom
 // because thinking tokens count toward the limit.
@@ -86,7 +106,7 @@ export async function callAnthropic(
 export async function* callAnthropicStream(
   system: string,
   user: string,
-  opts: { model?: string; maxTokens?: number; effort?: string } = {}
+  opts: { model?: string; maxTokens?: number; effort?: string; images?: ImagePart[] } = {}
 ): AsyncGenerator<string, { ok: boolean; error?: string }, unknown> {
   const model = opts.model || process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
   const key = process.env.ANTHROPIC_API_KEY;
@@ -109,7 +129,7 @@ export async function* callAnthropicStream(
         system,
         stream: true,
         ...think.body,
-        messages: [{ role: "user", content: user }],
+        messages: [{ role: "user", content: anthropicContent(user, opts.images) }],
       }),
     });
   } catch (e) {
