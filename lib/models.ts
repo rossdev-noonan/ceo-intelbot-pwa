@@ -21,7 +21,9 @@ export const MAX_OUTPUT_TOKENS = Number(process.env.MAX_OUTPUT_TOKENS) || 16000;
 const PERPLEXITY_MAX_TOKENS = Math.min(MAX_OUTPUT_TOKENS, 8000);
 // Analysts feed the synthesiser, so they run with a tighter ceiling to keep the
 // fan-out fast; the synthesiser (streamed) produces the full-length answer.
-export const ANALYST_MAX_TOKENS = Number(process.env.ANALYST_MAX_TOKENS) || 6000;
+// Reasoning models need headroom (reasoning tokens count against the cap), so
+// keep this comfortably above the visible-output budget.
+export const ANALYST_MAX_TOKENS = Number(process.env.ANALYST_MAX_TOKENS) || 10000;
 
 function ms(start: number): number {
   return Date.now() - start;
@@ -144,7 +146,7 @@ export async function* callAnthropicStream(
 export async function callOpenAI(
   system: string,
   user: string,
-  opts: { model?: string; maxTokens?: number; name?: string } = {}
+  opts: { model?: string; maxTokens?: number; name?: string; reasoningEffort?: string } = {}
 ): Promise<ModelResult> {
   const model = opts.model || process.env.OPENAI_MODEL || "gpt-5.5";
   const name = opts.name || "GPT-5.5";
@@ -157,7 +159,7 @@ export async function callOpenAI(
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify({
         model,
-        reasoning_effort: process.env.OPENAI_REASONING_EFFORT || "high",
+        reasoning_effort: opts.reasoningEffort || process.env.OPENAI_REASONING_EFFORT || "high",
         max_completion_tokens: opts.maxTokens ?? MAX_OUTPUT_TOKENS,
         messages: [
           { role: "system", content: system },

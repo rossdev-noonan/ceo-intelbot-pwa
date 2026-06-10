@@ -77,7 +77,7 @@ async function fanOut(
   const research = withInstructions(RESEARCH_SYSTEM, opts.instructions);
   const web = opts.connectors?.web ?? true;
   const calls = [
-    callOpenAI(analyst, analystUser, { maxTokens: ANALYST_MAX_TOKENS }),
+    callOpenAI(analyst, analystUser, { maxTokens: ANALYST_MAX_TOKENS, reasoningEffort: "medium" }),
     callAnthropic(analyst, analystUser, { maxTokens: ANALYST_MAX_TOKENS }),
     ...(web ? [callPerplexity(research, researchUser)] : []),
   ];
