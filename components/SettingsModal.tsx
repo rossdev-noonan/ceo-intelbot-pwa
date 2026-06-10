@@ -23,22 +23,22 @@ export default function SettingsModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl bg-[#0d1622] border border-[#23344a] p-5"
+        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl bg-[var(--panel)] border border-[var(--border-2)] p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-[#e6eefb]">Settings &amp; Connectors</h2>
-          <button onClick={onClose} className="text-[#6b7d94] hover:text-[#cdd9e8] text-xl leading-none">
+          <h2 className="text-lg font-semibold text-[var(--text-strong)]">Settings &amp; Connectors</h2>
+          <button onClick={onClose} className="text-[var(--muted-2)] hover:text-[var(--text)] text-xl leading-none">
             ✕
           </button>
         </div>
 
         {/* Global custom instructions */}
         <section className="mb-5">
-          <label className="block text-sm font-medium text-[#cdd9e8] mb-1">
+          <label className="block text-sm font-medium text-[var(--text)] mb-1">
             Global custom instructions
           </label>
-          <p className="text-xs text-[#6b7d94] mb-2">
+          <p className="text-xs text-[var(--muted-2)] mb-2">
             Applied to every chat in every project (e.g. tone, defaults, what to always include).
           </p>
           <textarea
@@ -46,13 +46,13 @@ export default function SettingsModal({
             onChange={(e) => setDraft({ ...draft, globalInstructions: e.target.value })}
             rows={4}
             placeholder="e.g. Always answer for NSW. Be concise and practical. Cite legislation by name."
-            className="w-full resize-y rounded-lg bg-[#0f1825] border border-[#2a3a52] px-3 py-2 text-sm outline-none focus:border-[#4a90d9]"
+            className="w-full resize-y rounded-lg bg-[var(--surface)] border border-[var(--border-2)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
           />
         </section>
 
         {/* Built-in connectors */}
         <section className="mb-5">
-          <h3 className="text-sm font-medium text-[#cdd9e8] mb-2">Connectors (Agent mode tools)</h3>
+          <h3 className="text-sm font-medium text-[var(--text)] mb-2">Connectors (Agent mode tools)</h3>
           <div className="space-y-2">
             <ToggleRow
               label="🔎 Knowledge base"
@@ -76,8 +76,8 @@ export default function SettingsModal({
           </div>
 
           <div className="mt-4">
-            <label className="block text-sm text-[#cdd9e8] mb-1">
-              Knowledge-base depth: <span className="font-mono text-[#8aa0bb]">{c.vaultDepth}</span> excerpts
+            <label className="block text-sm text-[var(--text)] mb-1">
+              Knowledge-base depth: <span className="font-mono text-[var(--muted)]">{c.vaultDepth}</span> excerpts
             </label>
             <input
               type="range"
@@ -86,9 +86,9 @@ export default function SettingsModal({
               step={1}
               value={c.vaultDepth}
               onChange={(e) => setConn({ vaultDepth: Number(e.target.value) })}
-              className="w-full accent-[#2b6fb3]"
+              className="w-full accent-[var(--accent)]"
             />
-            <p className="text-xs text-[#6b7d94]">
+            <p className="text-xs text-[var(--muted-2)]">
               More excerpts = deeper grounding but slower / more tokens.
             </p>
           </div>
@@ -96,18 +96,18 @@ export default function SettingsModal({
 
         {/* Planned external connectors (stubs) */}
         <section className="mb-5">
-          <h3 className="text-sm font-medium text-[#cdd9e8] mb-2">
-            External connectors <span className="text-xs text-[#6b7d94]">(coming soon)</span>
+          <h3 className="text-sm font-medium text-[var(--text)] mb-2">
+            External connectors <span className="text-xs text-[var(--muted-2)]">(coming soon)</span>
           </h3>
           <div className="grid grid-cols-2 gap-2">
             {PLANNED_CONNECTORS.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center gap-2 rounded-lg border border-[#1c2838] bg-[#0b121c] px-3 py-2 text-sm text-[#5b6b80]"
+                className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--muted-2)]"
               >
                 <span>{p.icon}</span>
                 <span className="flex-1 truncate">{p.name}</span>
-                <span className="text-[10px] rounded bg-[#16263a] px-1.5 py-0.5 text-[#7a8da3]">Soon</span>
+                <span className="text-[10px] rounded bg-[var(--hover)] px-1.5 py-0.5 text-[var(--muted)]">Soon</span>
               </div>
             ))}
           </div>
@@ -116,7 +116,7 @@ export default function SettingsModal({
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-lg border border-[#2a3a52] px-3 py-2 text-sm text-[#8aa0bb] hover:bg-[#13202f]"
+            className="rounded-lg border border-[var(--border-2)] px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--hover)]"
           >
             Cancel
           </button>
@@ -125,7 +125,7 @@ export default function SettingsModal({
               onSave(draft);
               onClose();
             }}
-            className="rounded-lg bg-[#2b6fb3] px-4 py-2 text-sm font-medium hover:bg-[#357ec7]"
+            className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium hover:bg-[var(--accent-hover)]"
           >
             Save
           </button>
@@ -149,16 +149,16 @@ function ToggleRow({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 rounded-lg border border-[#1c2838] bg-[#0f1825] px-3 py-2">
+    <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
       <div className="min-w-0">
-        <div className="text-sm text-[#cdd9e8]">{label}</div>
-        <div className="text-xs text-[#6b7d94]">{desc}</div>
+        <div className="text-sm text-[var(--text)]">{label}</div>
+        <div className="text-xs text-[var(--muted-2)]">{desc}</div>
       </div>
       <button
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={`mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors ${
-          checked ? "bg-[#2b6fb3]" : "bg-[#2a3a52]"
+          checked ? "bg-[var(--accent)]" : "bg-[var(--border-2)]"
         } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
         aria-pressed={checked}
       >

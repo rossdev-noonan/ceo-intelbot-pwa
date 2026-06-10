@@ -45,7 +45,7 @@ function uid() {
 }
 
 const EXPORT_BTN =
-  "rounded-md border border-[#243449] px-2 py-1 text-[#8aa0bb] hover:bg-[#13202f] hover:text-[#cdd9e8] transition-colors";
+  "rounded-md border border-[var(--border-2)] px-2 py-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)] transition-colors";
 
 export default function Home() {
   const [chats, setChats] = useState<Chat[]>([]);
@@ -66,6 +66,8 @@ export default function Home() {
   const [projectModal, setProjectModal] = useState<{ project: Project; isNew: boolean } | null>(null);
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [attaching, setAttaching] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -78,6 +80,18 @@ export default function Home() {
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 192) + "px"; // matches max-h-48
   }, [input]);
+
+  // Theme: load saved preference, then apply + persist.
+  useEffect(() => {
+    const t = localStorage.getItem("intelbot_theme");
+    if (t === "light" || t === "dark") setTheme(t);
+  }, []);
+  useEffect(() => {
+    document.documentElement.classList.toggle("light", theme === "light");
+    try {
+      localStorage.setItem("intelbot_theme", theme);
+    } catch {}
+  }, [theme]);
 
   // Load projects, settings, and chats (with migration to the project model).
   useEffect(() => {
@@ -184,6 +198,7 @@ export default function Home() {
     setChats((prev) => [c, ...prev]);
     setActiveId(c.id);
     setCollapsed((prev) => ({ ...prev, [pid]: false }));
+    setSidebarOpen(false);
   }
 
   function deleteChat(id: string) {
@@ -413,7 +428,7 @@ export default function Home() {
           (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
         }}
         className={`block w-full text-left rounded px-2 py-1.5 ${
-          disabled ? "text-[#42536b] cursor-not-allowed" : "text-[#cdd9e8] hover:bg-[#16263a]"
+          disabled ? "text-[var(--muted-2)] cursor-not-allowed" : "text-[var(--text)] hover:bg-[var(--hover)]"
         }`}
       >
         {label}
@@ -426,7 +441,7 @@ export default function Home() {
       <div
         key={c.id}
         className={`group flex items-center rounded-md transition-colors ${
-          c.id === activeId ? "bg-[#16263a]" : "hover:bg-[#111c29]"
+          c.id === activeId ? "bg-[var(--hover)]" : "hover:bg-[var(--hover)]"
         }`}
       >
         {editingId === c.id ? (
@@ -443,11 +458,14 @@ export default function Home() {
               }
             }}
             placeholder="Chat name"
-            className="flex-1 min-w-0 bg-transparent px-3 py-2 text-sm outline-none border border-[#2b6fb3] rounded-md"
+            className="flex-1 min-w-0 bg-transparent px-3 py-2 text-sm outline-none border border-[var(--accent)] rounded-md"
           />
         ) : (
           <button
-            onClick={() => setActiveId(c.id)}
+            onClick={() => {
+              setActiveId(c.id);
+              setSidebarOpen(false);
+            }}
             onDoubleClick={() => startRename(c.id, c.title)}
             title="Double-click to rename"
             className="flex-1 min-w-0 truncate px-3 py-2 text-sm text-left"
@@ -457,13 +475,13 @@ export default function Home() {
         )}
         {loadingChats[c.id] && (
           <span
-            className="mr-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[#4a90d9] animate-pulse group-hover:hidden"
+            className="mr-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)] animate-pulse group-hover:hidden"
             title="Working…"
           />
         )}
         {editingId !== c.id && (
           <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity pr-1">
-            <button onClick={() => startRename(c.id, c.title)} title="Rename" className="rounded p-1 text-[#6b7d94] hover:text-[#cdd9e8]">
+            <button onClick={() => startRename(c.id, c.title)} title="Rename" className="rounded p-1 text-[var(--muted-2)] hover:text-[var(--text)]">
               ✎
             </button>
             <button
@@ -471,7 +489,7 @@ export default function Home() {
                 if (confirm(`Delete chat "${c.title || "New chat"}"?`)) deleteChat(c.id);
               }}
               title="Delete"
-              className="rounded p-1 text-[#6b7d94] hover:text-[#e2728a]"
+              className="rounded p-1 text-[var(--muted-2)] hover:text-[var(--danger)]"
             >
               ✕
             </button>
@@ -483,17 +501,27 @@ export default function Home() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      <aside className="hidden md:flex w-64 flex-col bg-[#0a1018] border-r border-[#1c2838]">
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      <aside
+        className={`${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        } md:translate-x-0 fixed md:static z-40 h-full w-64 flex flex-col bg-[var(--sidebar)] border-r border-[var(--border)] transition-transform duration-200`}
+      >
         <div className="p-3 space-y-2">
           <button
             onClick={() => newChat()}
-            className="w-full rounded-lg border border-[#2a3a52] px-3 py-2 text-sm text-left hover:bg-[#13202f] transition-colors"
+            className="w-full rounded-lg border border-[var(--border-2)] px-3 py-2 text-sm text-left hover:bg-[var(--hover)] transition-colors"
           >
             + New chat
           </button>
           <button
             onClick={newProject}
-            className="w-full rounded-lg px-3 py-1.5 text-xs text-left text-[#8aa0bb] hover:bg-[#13202f] transition-colors"
+            className="w-full rounded-lg px-3 py-1.5 text-xs text-left text-[var(--muted)] hover:bg-[var(--hover)] transition-colors"
           >
             + New project
           </button>
@@ -505,25 +533,25 @@ export default function Home() {
             const isCollapsed = collapsed[p.id];
             return (
               <div key={p.id}>
-                <div className="group flex items-center rounded-md px-1 hover:bg-[#0d1622]">
+                <div className="group flex items-center rounded-md px-1 hover:bg-[var(--panel)]">
                   <button
                     onClick={() => setCollapsed((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
                     className="flex-1 min-w-0 flex items-center gap-1 px-1 py-1.5 text-left"
                   >
-                    <span className="text-[#5b6b80] text-[10px] w-3">{isCollapsed ? "▸" : "▾"}</span>
-                    <span className="truncate text-xs font-semibold uppercase tracking-wide text-[#7a8da3]">
+                    <span className="text-[var(--muted-2)] text-[10px] w-3">{isCollapsed ? "▸" : "▾"}</span>
+                    <span className="truncate text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
                       {p.name}
                     </span>
-                    <span className="text-[10px] text-[#4a5a70]">{pchats.length}</span>
+                    <span className="text-[10px] text-[var(--muted-2)]">{pchats.length}</span>
                   </button>
                   <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => newChat(p.id)} title="New chat in project" className="rounded p-1 text-[#6b7d94] hover:text-[#cdd9e8]">
+                    <button onClick={() => newChat(p.id)} title="New chat in project" className="rounded p-1 text-[var(--muted-2)] hover:text-[var(--text)]">
                       ＋
                     </button>
-                    <button onClick={() => setProjectModal({ project: p, isNew: false })} title="Project settings" className="rounded p-1 text-[#6b7d94] hover:text-[#cdd9e8]">
+                    <button onClick={() => setProjectModal({ project: p, isNew: false })} title="Project settings" className="rounded p-1 text-[var(--muted-2)] hover:text-[var(--text)]">
                       ✎
                     </button>
-                    <button onClick={() => deleteProject(p.id)} title="Delete project" className="rounded p-1 text-[#6b7d94] hover:text-[#e2728a]">
+                    <button onClick={() => deleteProject(p.id)} title="Delete project" className="rounded p-1 text-[var(--muted-2)] hover:text-[var(--danger)]">
                       ✕
                     </button>
                   </div>
@@ -531,7 +559,7 @@ export default function Home() {
                 {!isCollapsed && (
                   <div className="space-y-1 pl-2 mt-1">
                     {pchats.length === 0 && (
-                      <div className="px-3 py-1 text-xs text-[#4a5a70]">No chats yet</div>
+                      <div className="px-3 py-1 text-xs text-[var(--muted-2)]">No chats yet</div>
                     )}
                     {pchats.map((c) => chatRow(c))}
                   </div>
@@ -541,42 +569,56 @@ export default function Home() {
           })}
         </div>
 
-        <div className="p-3 border-t border-[#1c2838] flex items-center justify-between">
+        <div className="p-3 border-t border-[var(--border)] flex items-center justify-between">
           <button
             onClick={() => setSettingsOpen(true)}
-            className="rounded-md px-2 py-1 text-xs text-[#8aa0bb] hover:bg-[#13202f] hover:text-[#cdd9e8] transition-colors"
+            className="rounded-md px-2 py-1 text-xs text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)] transition-colors"
           >
             ⚙ Settings &amp; Connectors
           </button>
-          <span className="text-xs text-[#5b6b80]">Noonan</span>
+          <span className="text-xs text-[var(--muted-2)]">Noonan</span>
         </div>
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="px-4 py-3 border-b border-[#1c2838] flex items-center gap-2">
+        <header className="px-3 sm:px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="md:hidden rounded-md px-2 py-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+            title="Menu"
+          >
+            ☰
+          </button>
           <span className="font-semibold">IntelBot</span>
-          <span className="hidden sm:inline text-xs text-[#5b6b80] truncate">
+          <span className="hidden lg:inline text-xs text-[var(--muted-2)] truncate">
             {activeProject ? activeProject.name : "Noonan"} · grounded in your knowledge base
           </span>
           <div className="ml-auto flex items-center gap-2 text-xs">
+            <button
+              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              className="rounded-lg border border-[var(--border-2)] px-2 py-1.5 text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--hover)]"
+            >
+              {theme === "dark" ? "☀️" : "🌙"}
+            </button>
             <select
               value={settings.depth}
               onChange={(e) => setSettings((s) => ({ ...s, depth: e.target.value as Depth }))}
               title={DEPTHS.find((d) => d.id === settings.depth)?.hint}
-              className="rounded-lg border border-[#243449] bg-[#0d1622] px-2 py-1.5 text-[#cdd9e8] outline-none hover:border-[#2b6fb3] cursor-pointer"
+              className="rounded-lg border border-[var(--border-2)] bg-[var(--panel)] px-2 py-1.5 text-[var(--text)] outline-none hover:border-[var(--accent)] cursor-pointer"
             >
               {DEPTHS.map((d) => (
-                <option key={d.id} value={d.id} className="bg-[#0d1622]">
+                <option key={d.id} value={d.id} className="bg-[var(--panel)]">
                   {d.label}
                 </option>
               ))}
             </select>
-            <div className="flex items-center rounded-lg border border-[#243449] p-0.5">
+            <div className="flex items-center rounded-lg border border-[var(--border-2)] p-0.5">
               <button
                 onClick={() => setMode("team")}
                 title="Three models (GPT-5.5 + Claude + Perplexity) fan out and a synthesiser merges them."
                 className={`rounded-md px-2.5 py-1 transition-colors ${
-                  mode === "team" ? "bg-[#1e3a5f] text-white" : "text-[#8aa0bb] hover:text-[#cdd9e8]"
+                  mode === "team" ? "bg-[var(--user-bubble)] text-white" : "text-[var(--muted)] hover:text-[var(--text)]"
                 }`}
               >
                 Team
@@ -585,7 +627,7 @@ export default function Home() {
                 onClick={() => setMode("agent")}
                 title="Agent uses tools (vault search, web search, fetch any website incl. competitors) to research before answering."
                 className={`rounded-md px-2.5 py-1 transition-colors ${
-                  mode === "agent" ? "bg-[#1e3a5f] text-white" : "text-[#8aa0bb] hover:text-[#cdd9e8]"
+                  mode === "agent" ? "bg-[var(--user-bubble)] text-white" : "text-[var(--muted)] hover:text-[var(--text)]"
                 }`}
               >
                 Agent
@@ -597,8 +639,8 @@ export default function Home() {
         <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto w-full px-4 py-6 space-y-6">
             {active && active.messages.length === 0 && !activeLoading && (
-              <div className="text-center text-[#5b6b80] mt-20">
-                <div className="text-2xl font-semibold text-[#cdd9e8]">How can I help?</div>
+              <div className="text-center text-[var(--muted-2)] mt-20">
+                <div className="text-2xl font-semibold text-[var(--text)]">How can I help?</div>
                 <div className="mt-2 text-sm">
                   Ask about NSW property, tenancy law, or anything in Noonan&apos;s knowledge base.
                 </div>
@@ -610,8 +652,8 @@ export default function Home() {
                   data-msg-id={m.id}
                   className={`rounded-2xl px-4 py-3 leading-relaxed text-[15px] ${
                     m.role === "user"
-                      ? "bg-[#1e3a5f] max-w-[80%] whitespace-pre-wrap"
-                      : "bg-[#0f1825] border border-[#1c2838] max-w-[90%]"
+                      ? "bg-[var(--user-bubble)] text-white max-w-[80%] whitespace-pre-wrap"
+                      : "bg-[var(--surface)] border border-[var(--border)] max-w-[90%]"
                   }`}
                 >
                   {m.role === "assistant" ? (
@@ -623,7 +665,7 @@ export default function Home() {
                       return (
                         <>
                           {m.attachmentName && (
-                            <div className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-[#16263a] px-2 py-1 text-xs text-[#9ccbf7]">
+                            <div className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-[var(--hover)] px-2 py-1 text-xs text-[var(--accent-text)]">
                               📎 {m.attachmentName}
                             </div>
                           )}
@@ -635,7 +677,7 @@ export default function Home() {
                               onClick={() =>
                                 m.id && setExpanded((p) => ({ ...p, [m.id!]: !exp }))
                               }
-                              className="mt-1 text-xs text-[#9ccbf7] hover:underline"
+                              className="mt-1 text-xs text-[var(--accent-text)] hover:underline"
                             >
                               {exp ? "Show less ▲" : "Show more ▼"}
                             </button>
@@ -663,7 +705,7 @@ export default function Home() {
                           >
                             ⬇ Download
                           </summary>
-                          <div className="absolute z-20 mt-1 w-40 rounded-lg border border-[#243449] bg-[#0d1622] p-1 shadow-xl">
+                          <div className="absolute z-20 mt-1 w-40 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl">
                             {menuItem("PDF", () => {
                               const el = getMsgEl(m.id);
                               if (el) printAnswer(el.innerHTML, title, q);
@@ -694,7 +736,7 @@ export default function Home() {
                     );
                   })()}
                 {m.debug && (
-                  <div className="mt-1 max-w-[90%] rounded-md bg-[#0b121c] border border-[#1c2838] px-3 py-2 text-[10px] font-mono text-[#7a8da3] whitespace-pre-wrap break-all">
+                  <div className="mt-1 max-w-[90%] rounded-md bg-[var(--surface-2)] border border-[var(--border)] px-3 py-2 text-[10px] font-mono text-[var(--muted)] whitespace-pre-wrap break-all">
                     {m.debug}
                   </div>
                 )}
@@ -702,8 +744,8 @@ export default function Home() {
             ))}
             {activeLoading && !activeStreaming && (
               <div className="flex justify-start">
-                <div className="rounded-2xl px-4 py-3 bg-[#0f1825] border border-[#1c2838] text-[#8aa0bb] text-sm flex items-center gap-2">
-                  <span className="inline-block h-2 w-2 rounded-full bg-[#4a90d9] animate-pulse" />
+                <div className="rounded-2xl px-4 py-3 bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)] text-sm flex items-center gap-2">
+                  <span className="inline-block h-2 w-2 rounded-full bg-[var(--accent)] animate-pulse" />
                   {activeStatus}
                 </div>
               </div>
@@ -712,15 +754,15 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="border-t border-[#1c2838] p-3">
+        <div className="border-t border-[var(--border)] p-3">
           {(attachment || attaching) && (
             <div className="max-w-3xl mx-auto w-full mb-2">
-              <span className="inline-flex items-center gap-2 rounded-lg border border-[#2a3a52] bg-[#0f1825] px-3 py-1.5 text-xs text-[#cdd9e8]">
+              <span className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-2)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text)]">
                 📎 {attaching ? "Reading file…" : attachment?.name}
                 {attachment && (
                   <button
                     onClick={() => setAttachment(null)}
-                    className="text-[#6b7d94] hover:text-[#e2728a]"
+                    className="text-[var(--muted-2)] hover:text-[var(--danger)]"
                     title="Remove"
                   >
                     ✕
@@ -737,14 +779,26 @@ export default function Home() {
               accept=".pdf,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.log,text/*"
               onChange={onPickFile}
             />
-            <button
-              onClick={() => fileRef.current?.click()}
-              disabled={attaching}
-              title="Attach a document (PDF or text)"
-              className="rounded-xl border border-[#2a3a52] px-3 py-3 text-sm text-[#8aa0bb] hover:bg-[#13202f] hover:text-[#cdd9e8] disabled:opacity-40 transition-colors"
-            >
-              📎
-            </button>
+            <details className="relative">
+              <summary
+                title="Add"
+                className="flex items-center justify-center rounded-xl border border-[var(--border-2)] px-3.5 py-3 text-lg leading-none text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)] cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
+              >
+                +
+              </summary>
+              <div className="absolute bottom-full left-0 mb-1 w-56 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl z-20">
+                {menuItem("📎 Attach a file (PDF/text)", () => fileRef.current?.click())}
+                {menuItem(
+                  `🌐 Web search: ${settings.connectors.web ? "On" : "Off"}`,
+                  () =>
+                    setSettings((s) => ({
+                      ...s,
+                      connectors: { ...s.connectors, web: !s.connectors.web },
+                    }))
+                )}
+                {menuItem("🧠 Deep research (Pro)", () => setSettings((s) => ({ ...s, depth: "pro" })))}
+              </div>
+            </details>
             <textarea
               ref={taRef}
               value={input}
@@ -752,17 +806,17 @@ export default function Home() {
               onKeyDown={onKey}
               rows={1}
               placeholder="Message IntelBot…  (Shift+Enter for a new line)"
-              className="flex-1 resize-none rounded-xl bg-[#0f1825] border border-[#2a3a52] px-4 py-3 text-sm outline-none focus:border-[#4a90d9] max-h-48 overflow-y-auto"
+              className="flex-1 resize-none rounded-xl bg-[var(--surface)] border border-[var(--border-2)] px-4 py-3 text-sm outline-none focus:border-[var(--accent)] max-h-48 overflow-y-auto"
             />
             <button
               onClick={send}
               disabled={activeLoading || (!input.trim() && !attachment)}
-              className="rounded-xl bg-[#2b6fb3] disabled:opacity-40 px-4 py-3 text-sm font-medium hover:bg-[#357ec7] transition-colors"
+              className="rounded-xl bg-[var(--accent)] disabled:opacity-40 px-4 py-3 text-sm font-medium hover:bg-[var(--accent-hover)] transition-colors"
             >
               Send
             </button>
           </div>
-          <div className="max-w-3xl mx-auto text-center text-[10px] text-[#5b6b80] mt-2">
+          <div className="max-w-3xl mx-auto text-center text-[10px] text-[var(--muted-2)] mt-2">
             Deep answers take 2–5 min. Guidance based on NSW/Australian frameworks — not legal advice.
           </div>
         </div>
