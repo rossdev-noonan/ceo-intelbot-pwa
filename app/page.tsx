@@ -25,7 +25,8 @@ import {
 } from "@/lib/uiTypes";
 
 type Role = "user" | "assistant";
-type Msg = { role: Role; content: string; ts: number; debug?: string; id?: string };
+type Msg = { role: Role; content: string; ts: number; debug?: string; id?: string; attachmentName?: string };
+type Attachment = { name: string; text: string };
 type Chat = { id: string; title: string; projectId: string; messages: Msg[] };
 
 const LS_KEY = "intelbot_chats_v1";
@@ -63,6 +64,9 @@ export default function Home() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectModal, setProjectModal] = useState<{ project: Project; isNew: boolean } | null>(null);
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [attaching, setAttaching] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -72,7 +76,7 @@ export default function Home() {
     const el = taRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.5)) + "px";
+    el.style.height = Math.min(el.scrollHeight, 192) + "px"; // matches max-h-48
   }, [input]);
 
   // Load projects, settings, and chats (with migration to the project model).
@@ -239,11 +243,20 @@ export default function Home() {
   }
 
   async function send() {
-    const text = input.trim();
-    if (!text || !active || loadingChats[active.id]) return;
+    let text = input.trim();
+    if ((!text && !attachment) || !active || loadingChats[active.id]) return;
+    if (!text && attachment) text = `Please analyse the attached document "${attachment.name}".`;
     const chatId = active.id; // capture — the user may switch chats mid-stream
+    const sentAttachment = attachment;
     setInput("");
-    const userMsg: Msg = { role: "user", content: text, ts: Date.now(), id: uid() };
+    setAttachment(null);
+    const userMsg: Msg = {
+      role: "user",
+      content: text,
+      ts: Date.now(),
+      id: uid(),
+      attachmentName: sentAttachment?.name,
+    };
     const assistantId = uid();
     const history = active.messages;
     setChats((prev) =>
@@ -292,6 +305,7 @@ export default function Home() {
           instructions: combinedInstructions,
           connectors: settings.connectors,
           depth: settings.depth,
+          attachment: sentAttachment ?? undefined,
         }),
       });
       if (!res.body) throw new Error("No response stream");
@@ -349,6 +363,25 @@ export default function Home() {
     } finally {
       setLoadingChats((p) => ({ ...p, [chatId]: false }));
       setStreamingChats((p) => ({ ...p, [chatId]: false }));
+    }
+  }
+
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    setAttaching(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/extract", { method: "POST", body: fd });
+      const data = await res.json().catch(() => ({ error: "Bad response" }));
+      if (!res.ok || data.error) alert(data.error || "Could not read that file.");
+      else setAttachment({ name: data.name, text: data.text });
+    } catch (err) {
+      alert("Upload failed: " + (err instanceof Error ? err.message : "error"));
+    } finally {
+      setAttaching(false);
     }
   }
 
@@ -589,6 +622,11 @@ export default function Home() {
                       const exp = m.id ? expanded[m.id] : false;
                       return (
                         <>
+                          {m.attachmentName && (
+                            <div className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-[#16263a] px-2 py-1 text-xs text-[#9ccbf7]">
+                              📎 {m.attachmentName}
+                            </div>
+                          )}
                           <div className={long && !exp ? "max-h-28 overflow-hidden" : ""}>
                             {m.content}
                           </div>
@@ -675,19 +713,50 @@ export default function Home() {
         </div>
 
         <div className="border-t border-[#1c2838] p-3">
+          {(attachment || attaching) && (
+            <div className="max-w-3xl mx-auto w-full mb-2">
+              <span className="inline-flex items-center gap-2 rounded-lg border border-[#2a3a52] bg-[#0f1825] px-3 py-1.5 text-xs text-[#cdd9e8]">
+                📎 {attaching ? "Reading file…" : attachment?.name}
+                {attachment && (
+                  <button
+                    onClick={() => setAttachment(null)}
+                    className="text-[#6b7d94] hover:text-[#e2728a]"
+                    title="Remove"
+                  >
+                    ✕
+                  </button>
+                )}
+              </span>
+            </div>
+          )}
           <div className="max-w-3xl mx-auto w-full flex items-end gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              hidden
+              accept=".pdf,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.log,text/*"
+              onChange={onPickFile}
+            />
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={attaching}
+              title="Attach a document (PDF or text)"
+              className="rounded-xl border border-[#2a3a52] px-3 py-3 text-sm text-[#8aa0bb] hover:bg-[#13202f] hover:text-[#cdd9e8] disabled:opacity-40 transition-colors"
+            >
+              📎
+            </button>
             <textarea
               ref={taRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKey}
               rows={1}
-              placeholder="Message IntelBot…  (Shift+Enter for a new line — no length limit)"
-              className="flex-1 resize-none rounded-xl bg-[#0f1825] border border-[#2a3a52] px-4 py-3 text-sm outline-none focus:border-[#4a90d9] max-h-[50vh] overflow-y-auto"
+              placeholder="Message IntelBot…  (Shift+Enter for a new line)"
+              className="flex-1 resize-none rounded-xl bg-[#0f1825] border border-[#2a3a52] px-4 py-3 text-sm outline-none focus:border-[#4a90d9] max-h-48 overflow-y-auto"
             />
             <button
               onClick={send}
-              disabled={activeLoading || !input.trim()}
+              disabled={activeLoading || (!input.trim() && !attachment)}
               className="rounded-xl bg-[#2b6fb3] disabled:opacity-40 px-4 py-3 text-sm font-medium hover:bg-[#357ec7] transition-colors"
             >
               Send

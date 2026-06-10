@@ -14,6 +14,7 @@ type Body = {
   instructions?: string;
   connectors?: Connectors;
   depth?: "auto" | "instant" | "thinking" | "pro";
+  attachment?: { name: string; text: string };
 };
 
 // Streams NDJSON events: {type:"status"|"sources"|"delta"|"done"|"error", ...}
@@ -82,6 +83,7 @@ export async function POST(req: Request) {
     instructions: body.instructions,
     connectors: body.connectors,
     depth: body.depth,
+    attachment: body.attachment,
   };
   const events =
     body.mode === "agent"
