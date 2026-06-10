@@ -23,7 +23,7 @@ const PERPLEXITY_MAX_TOKENS = Math.min(MAX_OUTPUT_TOKENS, 8000);
 // fan-out fast; the synthesiser (streamed) produces the full-length answer.
 // Reasoning models need headroom (reasoning tokens count against the cap), so
 // keep this comfortably above the visible-output budget.
-export const ANALYST_MAX_TOKENS = Number(process.env.ANALYST_MAX_TOKENS) || 10000;
+export const ANALYST_MAX_TOKENS = Number(process.env.ANALYST_MAX_TOKENS) || 5000;
 
 function ms(start: number): number {
   return Date.now() - start;

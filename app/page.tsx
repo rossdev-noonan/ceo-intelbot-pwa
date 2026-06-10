@@ -52,6 +52,7 @@ export default function Home() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectModal, setProjectModal] = useState<{ project: Project; isNew: boolean } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -532,7 +533,31 @@ export default function Home() {
                       : "bg-[#0f1825] border border-[#1c2838] max-w-[90%]"
                   }`}
                 >
-                  {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
+                  {m.role === "assistant" ? (
+                    <Markdown>{m.content}</Markdown>
+                  ) : (
+                    (() => {
+                      const long = m.content.length > 420;
+                      const exp = m.id ? expanded[m.id] : false;
+                      return (
+                        <>
+                          <div className={long && !exp ? "max-h-28 overflow-hidden" : ""}>
+                            {m.content}
+                          </div>
+                          {long && (
+                            <button
+                              onClick={() =>
+                                m.id && setExpanded((p) => ({ ...p, [m.id!]: !exp }))
+                              }
+                              className="mt-1 text-xs text-[#9ccbf7] hover:underline"
+                            >
+                              {exp ? "Show less ▲" : "Show more ▼"}
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()
+                  )}
                 </div>
                 {m.role === "assistant" &&
                   m.content &&
