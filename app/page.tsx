@@ -193,14 +193,14 @@ export default function Home() {
     setTimeout(run, 350);
   }
 
-  // When switching INTO a chat, bring its latest question to the top so the view
-  // reads as a conversation (question above answer), not just a wall of answer.
+  // Pin the LATEST question to the top whenever a new question is asked or the
+  // chat is switched. Keyed on the question id (not the streaming answer) so it
+  // fires once per question and runs AFTER React mounts the scroll container.
+  const lastUserMsgId = active?.messages.filter((m) => m.role === "user").slice(-1)[0]?.id;
   useEffect(() => {
-    if (!active) return;
-    const lastUser = [...active.messages].reverse().find((m) => m.role === "user");
-    if (lastUser?.id) scrollQuestionToTop(lastUser.id);
+    if (lastUserMsgId) scrollQuestionToTop(lastUserMsgId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId]);
+  }, [lastUserMsgId, activeId]);
 
   function newChat(projectId?: string) {
     const pid = projectId ?? activeProject?.id ?? projects[0]?.id;
@@ -299,7 +299,6 @@ export default function Home() {
     setLoadingChats((p) => ({ ...p, [chatId]: true }));
     setStreamingChats((p) => ({ ...p, [chatId]: false }));
     setStatusByChat((p) => ({ ...p, [chatId]: STATUSES[0] }));
-    scrollQuestionToTop(userMsg.id!);
 
     let started = false;
     let acc = "";
