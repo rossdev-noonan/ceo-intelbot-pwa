@@ -45,9 +45,10 @@ export default function Home() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [activeId, setActiveId] = useState<string>("");
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [streaming, setStreaming] = useState(false);
-  const [status, setStatus] = useState(STATUSES[0]);
+  // Per-chat so a stream in one chat doesn't block sending in another.
+  const [loadingChats, setLoadingChats] = useState<Record<string, boolean>>({});
+  const [streamingChats, setStreamingChats] = useState<Record<string, boolean>>({});
+  const [statusByChat, setStatusByChat] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<"team" | "agent">("team");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -132,6 +133,9 @@ export default function Home() {
   }, [settings]);
 
   const active = chats.find((c) => c.id === activeId);
+  const activeLoading = active ? !!loadingChats[active.id] : false;
+  const activeStreaming = active ? !!streamingChats[active.id] : false;
+  const activeStatus = (active ? statusByChat[active.id] : "") || STATUSES[0];
   const activeProject = projects.find((p) => p.id === active?.projectId) ?? projects[0];
   const combinedInstructions = [settings.globalInstructions, activeProject?.instructions]
     .map((s) => (s ?? "").trim())
@@ -215,13 +219,15 @@ export default function Home() {
 
   async function send() {
     const text = input.trim();
-    if (!text || loading || !active) return;
+    if (!text || !active || loadingChats[active.id]) return;
+    const chatId = active.id; // capture — the user may switch chats mid-stream
     setInput("");
     const userMsg: Msg = { role: "user", content: text, ts: Date.now(), id: uid() };
     const assistantId = uid();
+    const history = active.messages;
     setChats((prev) =>
       prev.map((c) =>
-        c.id === activeId
+        c.id === chatId
           ? {
               ...c,
               title: c.messages.length === 0 ? text.slice(0, 42) : c.title,
@@ -230,9 +236,9 @@ export default function Home() {
           : c
       )
     );
-    setLoading(true);
-    setStreaming(false);
-    setStatus(STATUSES[0]);
+    setLoadingChats((p) => ({ ...p, [chatId]: true }));
+    setStreamingChats((p) => ({ ...p, [chatId]: false }));
+    setStatusByChat((p) => ({ ...p, [chatId]: STATUSES[0] }));
     scrollQuestionToTop(userMsg.id!);
 
     let started = false;
@@ -240,7 +246,7 @@ export default function Home() {
     const upsert = (content: string, debug?: string) => {
       setChats((prev) =>
         prev.map((c) => {
-          if (c.id !== activeId) return c;
+          if (c.id !== chatId) return c;
           const msgs = [...c.messages];
           if (started) {
             msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content, debug };
@@ -259,8 +265,8 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
-          conversationId: activeId,
-          history: active.messages,
+          conversationId: chatId,
+          history,
           mode,
           instructions: combinedInstructions,
           connectors: settings.connectors,
@@ -295,10 +301,10 @@ export default function Home() {
             continue;
           }
           if (evt.type === "status") {
-            setStatus(evt.stage ?? "");
+            setStatusByChat((p) => ({ ...p, [chatId]: evt.stage ?? "" }));
           } else if (evt.type === "delta") {
             acc += evt.text ?? "";
-            setStreaming(true);
+            setStreamingChats((p) => ({ ...p, [chatId]: true }));
             upsert(acc, debugStr);
           } else if (evt.type === "error") {
             acc += (acc ? "\n\n" : "") + "⚠ " + (evt.error ?? "error");
@@ -319,8 +325,8 @@ export default function Home() {
       const msg = e instanceof Error ? e.message : "unknown error";
       upsert((acc ? acc + "\n\n" : "") + "Error: " + msg);
     } finally {
-      setLoading(false);
-      setStreaming(false);
+      setLoadingChats((p) => ({ ...p, [chatId]: false }));
+      setStreamingChats((p) => ({ ...p, [chatId]: false }));
     }
   }
 
@@ -393,6 +399,12 @@ export default function Home() {
           >
             {c.title || "New chat"}
           </button>
+        )}
+        {loadingChats[c.id] && (
+          <span
+            className="mr-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[#4a90d9] animate-pulse group-hover:hidden"
+            title="Working…"
+          />
         )}
         {editingId !== c.id && (
           <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity pr-1">
@@ -515,7 +527,7 @@ export default function Home() {
 
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto w-full px-4 py-6 space-y-6">
-            {active && active.messages.length === 0 && !loading && (
+            {active && active.messages.length === 0 && !activeLoading && (
               <div className="text-center text-[#5b6b80] mt-20">
                 <div className="text-2xl font-semibold text-[#cdd9e8]">How can I help?</div>
                 <div className="mt-2 text-sm">
@@ -561,7 +573,7 @@ export default function Home() {
                 </div>
                 {m.role === "assistant" &&
                   m.content &&
-                  !(loading && i === (active?.messages.length ?? 0) - 1) &&
+                  !(activeLoading && i === (active?.messages.length ?? 0) - 1) &&
                   (() => {
                     const q = active?.messages[i - 1]?.content;
                     const title = (q || active?.title || "intelbot-answer").slice(0, 60);
@@ -614,11 +626,11 @@ export default function Home() {
                 )}
               </div>
             ))}
-            {loading && !streaming && (
+            {activeLoading && !activeStreaming && (
               <div className="flex justify-start">
                 <div className="rounded-2xl px-4 py-3 bg-[#0f1825] border border-[#1c2838] text-[#8aa0bb] text-sm flex items-center gap-2">
                   <span className="inline-block h-2 w-2 rounded-full bg-[#4a90d9] animate-pulse" />
-                  {status}
+                  {activeStatus}
                 </div>
               </div>
             )}
@@ -639,7 +651,7 @@ export default function Home() {
             />
             <button
               onClick={send}
-              disabled={loading || !input.trim()}
+              disabled={activeLoading || !input.trim()}
               className="rounded-xl bg-[#2b6fb3] disabled:opacity-40 px-4 py-3 text-sm font-medium hover:bg-[#357ec7] transition-colors"
             >
               Send
