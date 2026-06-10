@@ -68,7 +68,10 @@ export default function Home() {
   const [attaching, setAttaching] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [listening, setListening] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -407,6 +410,38 @@ export default function Home() {
     }
   }
 
+  // Voice dictation via the browser Speech Recognition API (Chrome/Edge).
+  function toggleMic() {
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) {
+      alert("Voice input isn't supported in this browser. Use Chrome or Edge.");
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-AU";
+    rec.interimResults = true;
+    rec.continuous = true;
+    const startText = input ? input.trim() + " " : "";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (e: any) => {
+      let txt = "";
+      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+      setInput(startText + txt);
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    rec.start();
+    setListening(true);
+  }
+
   function getMsgEl(id?: string): HTMLElement | null {
     return id ? (document.querySelector(`[data-msg-id="${id}"]`) as HTMLElement | null) : null;
   }
@@ -499,6 +534,80 @@ export default function Home() {
     );
   }
 
+  // The ChatGPT-style composer pill (used centered on an empty chat, or at the
+  // bottom once there are messages).
+  function composer() {
+    return (
+      <div className="mx-auto w-full max-w-3xl">
+        {(attachment || attaching) && (
+          <div className="mb-2">
+            <span className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-2)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text)]">
+              📎 {attaching ? "Reading file…" : attachment?.name}
+              {attachment && (
+                <button onClick={() => setAttachment(null)} className="text-[var(--muted-2)] hover:text-[var(--danger)]" title="Remove">
+                  ✕
+                </button>
+              )}
+            </span>
+          </div>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          hidden
+          accept=".pdf,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.log,text/*"
+          onChange={onPickFile}
+        />
+        <div className="flex items-end gap-1 rounded-[26px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5">
+          <details className="relative">
+            <summary
+              title="Add"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)] cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
+            >
+              +
+            </summary>
+            <div className="absolute bottom-full left-0 mb-2 w-56 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl z-20">
+              {menuItem("📎 Attach a file (PDF/text)", () => fileRef.current?.click())}
+              {menuItem(`🌐 Web search: ${settings.connectors.web ? "On" : "Off"}`, () =>
+                setSettings((s) => ({ ...s, connectors: { ...s.connectors, web: !s.connectors.web } }))
+              )}
+              {menuItem("🧠 Deep research (Pro)", () => setSettings((s) => ({ ...s, depth: "pro" })))}
+            </div>
+          </details>
+          <textarea
+            ref={taRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKey}
+            rows={1}
+            placeholder="Message IntelBot…"
+            className="flex-1 resize-none bg-transparent px-1 py-2 text-sm outline-none max-h-48 overflow-y-auto"
+          />
+          <button
+            onClick={toggleMic}
+            title={listening ? "Stop recording" : "Voice input"}
+            className={`flex h-9 w-9 items-center justify-center rounded-full ${
+              listening ? "text-red-400 bg-[var(--hover)] animate-pulse" : "text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+            }`}
+          >
+            {listening ? "⏹" : "🎙"}
+          </button>
+          <button
+            onClick={send}
+            disabled={activeLoading || (!input.trim() && !attachment)}
+            title="Send"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-30"
+          >
+            ↑
+          </button>
+        </div>
+        <div className="text-center text-[10px] text-[var(--muted-2)] mt-2">
+          Deep answers take 2–5 min. Guidance based on NSW/Australian frameworks — not legal advice.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       {sidebarOpen && (
@@ -581,7 +690,7 @@ export default function Home() {
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="px-3 sm:px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
+        <header className="px-3 sm:px-4 py-3 flex items-center gap-2">
           <button
             onClick={() => setSidebarOpen(true)}
             className="md:hidden rounded-md px-2 py-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
@@ -636,24 +745,26 @@ export default function Home() {
           </div>
         </header>
 
+        {active && active.messages.length === 0 && !activeLoading ? (
+          <div className="flex-1 flex flex-col items-center justify-center px-4 pb-16">
+            <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--text)]">How can I help?</h1>
+            <p className="mt-2 mb-6 text-sm text-[var(--muted-2)] text-center">
+              Ask about NSW property, tenancy law, or anything in Noonan&apos;s knowledge base.
+            </p>
+            {composer()}
+          </div>
+        ) : (
+        <>
         <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto w-full px-4 py-6 space-y-6">
-            {active && active.messages.length === 0 && !activeLoading && (
-              <div className="text-center text-[var(--muted-2)] mt-20">
-                <div className="text-2xl font-semibold text-[var(--text)]">How can I help?</div>
-                <div className="mt-2 text-sm">
-                  Ask about NSW property, tenancy law, or anything in Noonan&apos;s knowledge base.
-                </div>
-              </div>
-            )}
             {active?.messages.map((m, i) => (
               <div key={i} className={m.role === "user" ? "flex justify-end" : "flex flex-col items-start"}>
                 <div
                   data-msg-id={m.id}
-                  className={`rounded-2xl px-4 py-3 leading-relaxed text-[15px] ${
+                  className={`leading-relaxed text-[15px] ${
                     m.role === "user"
-                      ? "bg-[var(--user-bubble)] text-white max-w-[80%] whitespace-pre-wrap"
-                      : "bg-[var(--surface)] border border-[var(--border)] max-w-[90%]"
+                      ? "rounded-2xl px-4 py-2.5 bg-[var(--user-bubble)] text-white max-w-[85%] whitespace-pre-wrap"
+                      : "w-full max-w-full"
                   }`}
                 >
                   {m.role === "assistant" ? (
@@ -743,83 +854,17 @@ export default function Home() {
               </div>
             ))}
             {activeLoading && !activeStreaming && (
-              <div className="flex justify-start">
-                <div className="rounded-2xl px-4 py-3 bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)] text-sm flex items-center gap-2">
-                  <span className="inline-block h-2 w-2 rounded-full bg-[var(--accent)] animate-pulse" />
-                  {activeStatus}
-                </div>
+              <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                <span className="inline-block h-2 w-2 rounded-full bg-[var(--accent)] animate-pulse" />
+                {activeStatus}
               </div>
             )}
             <div ref={endRef} />
           </div>
         </div>
-
-        <div className="border-t border-[var(--border)] p-3">
-          {(attachment || attaching) && (
-            <div className="max-w-3xl mx-auto w-full mb-2">
-              <span className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-2)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text)]">
-                📎 {attaching ? "Reading file…" : attachment?.name}
-                {attachment && (
-                  <button
-                    onClick={() => setAttachment(null)}
-                    className="text-[var(--muted-2)] hover:text-[var(--danger)]"
-                    title="Remove"
-                  >
-                    ✕
-                  </button>
-                )}
-              </span>
-            </div>
-          )}
-          <div className="max-w-3xl mx-auto w-full flex items-end gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              hidden
-              accept=".pdf,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.log,text/*"
-              onChange={onPickFile}
-            />
-            <details className="relative">
-              <summary
-                title="Add"
-                className="flex items-center justify-center rounded-xl border border-[var(--border-2)] px-3.5 py-3 text-lg leading-none text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)] cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
-              >
-                +
-              </summary>
-              <div className="absolute bottom-full left-0 mb-1 w-56 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl z-20">
-                {menuItem("📎 Attach a file (PDF/text)", () => fileRef.current?.click())}
-                {menuItem(
-                  `🌐 Web search: ${settings.connectors.web ? "On" : "Off"}`,
-                  () =>
-                    setSettings((s) => ({
-                      ...s,
-                      connectors: { ...s.connectors, web: !s.connectors.web },
-                    }))
-                )}
-                {menuItem("🧠 Deep research (Pro)", () => setSettings((s) => ({ ...s, depth: "pro" })))}
-              </div>
-            </details>
-            <textarea
-              ref={taRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onKey}
-              rows={1}
-              placeholder="Message IntelBot…  (Shift+Enter for a new line)"
-              className="flex-1 resize-none rounded-xl bg-[var(--surface)] border border-[var(--border-2)] px-4 py-3 text-sm outline-none focus:border-[var(--accent)] max-h-48 overflow-y-auto"
-            />
-            <button
-              onClick={send}
-              disabled={activeLoading || (!input.trim() && !attachment)}
-              className="rounded-xl bg-[var(--accent)] disabled:opacity-40 px-4 py-3 text-sm font-medium hover:bg-[var(--accent-hover)] transition-colors"
-            >
-              Send
-            </button>
-          </div>
-          <div className="max-w-3xl mx-auto text-center text-[10px] text-[var(--muted-2)] mt-2">
-            Deep answers take 2–5 min. Guidance based on NSW/Australian frameworks — not legal advice.
-          </div>
-        </div>
+        <div className="px-3 pb-3 pt-1">{composer()}</div>
+        </>
+        )}
       </main>
 
       {settingsOpen && (
