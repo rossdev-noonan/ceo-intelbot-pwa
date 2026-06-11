@@ -614,7 +614,7 @@ export default function Home() {
           ref={fileRef}
           type="file"
           hidden
-          accept=".pdf,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.log,text/*,image/*"
+          accept=".pdf,.docx,.xlsx,.xls,.pptx,.zip,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.log,.css,.scss,.sql,.toml,.ini,.js,.jsx,.ts,.tsx,.py,.rb,.php,.java,.go,.rs,.c,.h,.cpp,.cs,.sh,text/*,image/*"
           onChange={onPickFile}
         />
         <div className="flex items-end gap-1 rounded-[26px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5">
@@ -626,7 +626,7 @@ export default function Home() {
               +
             </summary>
             <div className="ib-pop absolute bottom-full left-0 mb-2 w-56 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl z-20">
-              {menuItem("📎 Attach a file (PDF/text)", () => fileRef.current?.click())}
+              {menuItem("📎 Attach a file (PDF, Office, ZIP, code…)", () => fileRef.current?.click())}
               {menuItem(`🌐 Web search: ${settings.connectors.web ? "On" : "Off"}`, () =>
                 setSettings((s) => ({ ...s, connectors: { ...s.connectors, web: !s.connectors.web } }))
               )}
