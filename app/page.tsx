@@ -60,7 +60,7 @@ export default function Home() {
   const [loadingChats, setLoadingChats] = useState<Record<string, boolean>>({});
   const [streamingChats, setStreamingChats] = useState<Record<string, boolean>>({});
   const [statusByChat, setStatusByChat] = useState<Record<string, string>>({});
-  const [mode, setMode] = useState<"team" | "agent">("team");
+  const [mode, setMode] = useState<"team" | "agent" | "hybrid">("team");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -793,7 +793,7 @@ export default function Home() {
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="px-3 sm:px-4 py-3 flex items-center gap-2">
+        <header className="px-3 sm:px-4 py-2 sm:py-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <button
             onClick={() => setSidebarOpen((o) => !o)}
             className="rounded-md px-2 py-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
@@ -828,21 +828,30 @@ export default function Home() {
             <div className="flex items-center rounded-lg border border-[var(--border-2)] p-0.5">
               <button
                 onClick={() => setMode("team")}
-                title="Three models (GPT-5.5 + Claude + Perplexity) fan out and a synthesiser merges them."
+                title="Teams — swarm collaboration for complex work: three models fan out in parallel and a synthesiser merges them. Best for strategy, complex analysis and competing viewpoints."
                 className={`rounded-md px-2.5 py-1 transition-colors ${
                   mode === "team" ? "bg-[var(--user-bubble)] text-white" : "text-[var(--muted)] hover:text-[var(--text)]"
                 }`}
               >
-                Team
+                Teams
               </button>
               <button
                 onClick={() => setMode("agent")}
-                title="Agent uses tools (vault search, web search, fetch any website incl. competitors) to research before answering."
+                title="Agents — step-by-step relay built for efficient execution: Perplexity researches → GPT synthesises → Claude QAs and formats the final. Best for cost-efficient, repeatable, structured outputs."
                 className={`rounded-md px-2.5 py-1 transition-colors ${
                   mode === "agent" ? "bg-[var(--user-bubble)] text-white" : "text-[var(--muted)] hover:text-[var(--text)]"
                 }`}
               >
-                Agent
+                Agents
+              </button>
+              <button
+                onClick={() => setMode("hybrid")}
+                title="Hybrid — research-first AI comparison with final decision making: Perplexity researches once, GPT + Claude draft in parallel, GPT compares and merges the final answer. Best for high-value answers needing accuracy and polish."
+                className={`rounded-md px-2.5 py-1 transition-colors ${
+                  mode === "hybrid" ? "bg-[var(--user-bubble)] text-white" : "text-[var(--muted)] hover:text-[var(--text)]"
+                }`}
+              >
+                Hybrid
               </button>
             </div>
           </div>

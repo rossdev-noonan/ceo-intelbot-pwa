@@ -1,0 +1,353 @@
+# IntelBot FLOWs v0.2 — execution-mode architecture (canonical spec from Ross, 2026-06-11)
+# Teams = unchanged swarm (3-model fan-out + synthesis, lib/brain.ts).
+# Agents = relay pipeline (lib/relay.ts). Hybrid = research → parallel → decide (lib/hybrid.ts).
+
+intelbot_agent_architecture:
+  version: 0.2
+  product_name: IntelBot
+  concept_name: FLOWs
+
+  description: >
+    IntelBot supports multiple AI execution modes. Teams remain as the swarm
+    collaboration layer. Agents are converted into relay-based specialists.
+    Hybrid mode combines research-first grounding with parallel model review
+    and a final decision-making stage.
+
+  execution_modes:
+
+    teams:
+      mode_type: swarm
+      status: unchanged
+      purpose: >
+        Teams are used when multiple agents need to collaborate, divide tasks,
+        debate, review each other, or work together on complex multi-angle
+        problems.
+      behavior:
+        - Multiple agents can work at the same time.
+        - Agents may have separate roles, goals, tools, and memory.
+        - Agents can debate or cross-check each other.
+        - Best for broad, complex, creative, or strategic tasks.
+      best_for:
+        - brainstorming
+        - strategic planning
+        - multi-department workflows
+        - complex analysis
+        - role-based collaboration
+        - competing viewpoints
+      cost_profile: high
+      control_profile: flexible_but_less_predictable
+
+    agents:
+      mode_type: relay
+      status: updated
+      purpose: >
+        Agents now work as a relay pipeline. Each stage performs a specialized
+        function, compresses its output, and passes it to the next stage.
+      behavior:
+        - Work moves step-by-step in sequence.
+        - Each model or agent has one clear responsibility.
+        - Later stages should not redo earlier work unless validation fails.
+        - Only compressed structured outputs are passed between stages.
+      default_pipeline:
+        - stage_id: research
+          provider: perplexity
+          role: research_specialist
+          responsibility: >
+            Gather current information, source-backed findings, citations,
+            and relevant external context.
+        - stage_id: synthesis
+          provider: openai_chatgpt
+          role: normalization_and_synthesis_specialist
+          responsibility: >
+            Clean, deduplicate, normalize, structure, and synthesize the
+            research into a usable intermediate artifact.
+        - stage_id: final_qa
+          provider: anthropic_claude
+          role: final_qa_and_formatting_specialist
+          responsibility: >
+            Review the synthesized artifact, arrange the final structure,
+            check for issues, and produce a polished final deliverable.
+      best_for:
+        - cost-efficient workflows
+        - predictable task execution
+        - document generation
+        - research-to-report pipelines
+        - repeatable business processes
+        - structured outputs
+      cost_profile: low_to_medium
+      control_profile: high
+
+    hybrid:
+      mode_type: research_parallel_decision
+      status: new
+      purpose: >
+        Hybrid mode combines relay and parallel evaluation. Perplexity performs
+        the initial research first. The research is then passed to ChatGPT and
+        Claude in parallel. Their outputs are compared, and ChatGPT acts as the
+        final decision maker that selects, merges, or corrects the final answer.
+      behavior:
+        - Research happens first.
+        - ChatGPT and Claude receive the same research packet in parallel.
+        - Both models produce independent analysis or draft outputs.
+        - A comparison stage checks agreement, disagreement, strengths, and issues.
+        - ChatGPT makes the final decision and generates the final result.
+      default_pipeline:
+        - stage_id: research
+          provider: perplexity
+          role: research_grounding_specialist
+          execution: sequential_first
+          responsibility: >
+            Perform source-backed research, gather citations, identify key
+            findings, contradictions, and unresolved questions.
+          output_contract:
+            research_summary: string
+            key_findings:
+              type: array
+              items:
+                claim: string
+                citations:
+                  type: array
+                  items: string
+                confidence: number
+            contradictions:
+              type: array
+              items: string
+            unresolved_questions:
+              type: array
+              items: string
+
+        - stage_id: parallel_chatgpt_analysis
+          provider: openai_chatgpt
+          role: synthesis_candidate
+          execution: parallel
+          receives:
+            - user_request
+            - perplexity_research_packet
+          responsibility: >
+            Produce a structured, logical, and normalized answer candidate
+            based on the research packet. Focus on clarity, correctness,
+            schema discipline, and decision reasoning.
+          output_contract:
+            candidate_answer: string
+            reasoning_summary: string
+            strengths:
+              type: array
+              items: string
+            risks:
+              type: array
+              items: string
+            confidence: number
+
+        - stage_id: parallel_claude_analysis
+          provider: anthropic_claude
+          role: qa_candidate
+          execution: parallel
+          receives:
+            - user_request
+            - perplexity_research_packet
+          responsibility: >
+            Produce an independent answer candidate based on the same research
+            packet. Focus on completeness, nuance, writing quality, long-context
+            consistency, issue detection, and final-user readability.
+          output_contract:
+            candidate_answer: string
+            reasoning_summary: string
+            strengths:
+              type: array
+              items: string
+            risks:
+              type: array
+              items: string
+            confidence: number
+
+        - stage_id: comparison
+          provider: openai_chatgpt
+          role: comparison_and_judgment_engine
+          execution: sequential_after_parallel
+          receives:
+            - user_request
+            - perplexity_research_packet
+            - chatgpt_candidate
+            - claude_candidate
+          responsibility: >
+            Compare the ChatGPT and Claude candidates against the original
+            user request and the Perplexity research packet. Identify where
+            they agree, where they conflict, what each one does better, and
+            which claims are best supported by sources.
+          comparison_criteria:
+            - factual_accuracy
+            - citation_support
+            - completeness
+            - user_intent_alignment
+            - clarity
+            - risk_level
+            - hallucination_risk
+            - actionability
+            - output_format_compliance
+          output_contract:
+            agreement_points:
+              type: array
+              items: string
+            disagreement_points:
+              type: array
+              items:
+                issue: string
+                chatgpt_position: string
+                claude_position: string
+                preferred_resolution: string
+            selected_elements:
+              type: array
+              items:
+                source_model: string
+                element: string
+                reason_selected: string
+            rejected_elements:
+              type: array
+              items:
+                source_model: string
+                element: string
+                reason_rejected: string
+
+        - stage_id: final_decision
+          provider: openai_chatgpt
+          role: final_decision_maker
+          execution: final
+          receives:
+            - comparison_report
+            - perplexity_research_packet
+            - chatgpt_candidate
+            - claude_candidate
+          responsibility: >
+            Produce the final answer by selecting, merging, correcting, or
+            rewriting the best parts of both candidate outputs. The final result
+            must be grounded in the research packet and aligned with the user's
+            requested format.
+          rules:
+            - Do not choose a candidate only because of provider identity.
+            - Prefer the answer with stronger evidence and clearer reasoning.
+            - Merge both answers when each has useful strengths.
+            - Remove unsupported claims.
+            - Preserve citations where required.
+            - Clearly disclose unresolved uncertainty.
+            - Produce the final output in the requested format.
+          output_contract:
+            final_output: string
+            decision_summary:
+              selected_primary_source: string
+              reason: string
+              merged_from_both: boolean
+            qa_notes:
+              type: array
+              items: string
+            final_confidence: number
+
+      best_for:
+        - high-value answers
+        - important research tasks
+        - competitive model comparison
+        - complex decisions
+        - final deliverables that need both accuracy and polish
+        - tasks where one model may miss nuance
+      cost_profile: medium_to_high
+      control_profile: high
+      latency_profile: medium
+      accuracy_profile: high
+
+  routing_rules:
+    choose_teams_when:
+      - task_requires_multiple_roles
+      - task_requires_debate
+      - task_requires_creativity_from_many_angles
+      - task_is_large_and_open_ended
+      - user_requests_collaboration
+
+    choose_agents_when:
+      - task_has_clear_steps
+      - cost_control_is_priority
+      - output_needs_repeatability
+      - workflow_is_known
+      - user_needs_fast_structured_result
+
+    choose_hybrid_when:
+      - task_requires_current_research
+      - task_is_high_value
+      - answer_quality_matters_more_than_lowest_cost
+      - comparing_model_outputs_would_improve_reliability
+      - final_output_needs_both_accuracy_and_polish
+      - there_is_risk_of_missing_important_context
+
+  cost_controls:
+    teams:
+      - Limit number of active agents.
+      - Use only when swarm collaboration is necessary.
+      - Stop agents once their role is complete.
+
+    agents:
+      - Compress output after every relay stage.
+      - Do not pass raw full context unless required.
+      - Use cheaper models for simple stages.
+      - Cache repeated research and grounding.
+
+    hybrid:
+      - Run Perplexity research once only.
+      - Send the same compressed research packet to ChatGPT and Claude.
+      - Do not allow ChatGPT and Claude to perform duplicate web research unless explicitly required.
+      - Limit candidate outputs to structured comparison-ready responses.
+      - Use the final decision stage to merge, not restart the task.
+
+  naming_convention:
+    platform: IntelBot
+    custom_specialists: FLOWs
+
+    team_mode:
+      label: Teams
+      description: Swarm-based multi-agent collaboration.
+
+    agent_mode:
+      label: Agents
+      description: Relay-based specialist execution.
+
+    hybrid_mode:
+      label: Hybrid
+      description: Research-first parallel review with final decision making.
+
+  ui_labels:
+    main_modes:
+      - Chat
+      - Agents
+      - Teams
+      - Hybrid
+      - Files
+      - Automations
+      - Settings
+
+    agent_mode:
+      title: Agents
+      subtitle: Step-by-step relay agents built for efficient execution.
+      primary_cta: Create Agent
+      run_cta: Run Agent
+
+    team_mode:
+      title: Teams
+      subtitle: Swarm collaboration for complex work.
+      primary_cta: Create Team
+      run_cta: Run Team
+
+    hybrid_mode:
+      title: Hybrid
+      subtitle: Research-first AI comparison with final decision making.
+      primary_cta: Create Hybrid
+      run_cta: Run Hybrid
+
+  short_product_explanation: >
+    IntelBot has three execution modes. Teams are swarms for collaboration.
+    Agents are relays for cost-efficient step-by-step execution. Hybrid mode
+    researches first, compares ChatGPT and Claude in parallel, and uses ChatGPT
+    as the final decision maker.
+
+  developer_note: >
+    Hybrid mode should be implemented as a deterministic orchestration pattern:
+    Perplexity research runs first, ChatGPT and Claude candidate stages run in
+    parallel, then ChatGPT performs comparison and final decision. All stages
+    must use strict structured outputs to keep the workflow debuggable,
+    repeatable, and cost-controlled.

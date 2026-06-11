@@ -52,7 +52,7 @@ export default function SettingsModal({
 
         {/* Built-in connectors */}
         <section className="mb-5">
-          <h3 className="text-sm font-medium text-[var(--text)] mb-2">Connectors (Agent mode tools)</h3>
+          <h3 className="text-sm font-medium text-[var(--text)] mb-2">Connectors</h3>
           <div className="space-y-2">
             <ToggleRow
               label="🔎 Knowledge base"
@@ -63,15 +63,9 @@ export default function SettingsModal({
             />
             <ToggleRow
               label="🌐 Web search"
-              desc="Live web research via Perplexity — competitors, companies, market data, current law."
+              desc="Live web research via Perplexity — used by Teams, Agents and Hybrid for current facts, market data and competitor research."
               checked={c.web}
               onChange={(v) => setConn({ web: v })}
-            />
-            <ToggleRow
-              label="📄 Fetch web page"
-              desc="Let the agent open and read any URL — including competitor websites."
-              checked={c.fetch}
-              onChange={(v) => setConn({ fetch: v })}
             />
           </div>
 

@@ -92,7 +92,7 @@ export function attachmentsBlock(attachments?: Attachment[]): string {
 
 type Turn = { role: string; content: string };
 
-function historyBlock(history?: Turn[]): string {
+export function historyBlock(history?: { role: string; content: string }[]): string {
   if (!history?.length) return "";
   const recent = history.slice(-20);
   const lines = recent.map((t) => `${t.role === "user" ? "User" : "IntelBot"}: ${t.content}`);

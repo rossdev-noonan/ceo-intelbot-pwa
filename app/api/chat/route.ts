@@ -1,5 +1,6 @@
 import { answerStream, type StreamEvent, type Connectors } from "@/lib/brain";
-import { agentStream } from "@/lib/agent";
+import { relayStream } from "@/lib/relay";
+import { hybridStream } from "@/lib/hybrid";
 import { checkSensitivity, sensitivityRefusal } from "@/lib/sensitivity";
 import { requireUser } from "@/auth";
 
@@ -10,7 +11,7 @@ type Body = {
   message?: string;
   conversationId?: string;
   history?: { role: string; content: string }[];
-  mode?: "team" | "agent";
+  mode?: "team" | "agent" | "hybrid";
   instructions?: string;
   connectors?: Connectors;
   depth?: "auto" | "instant" | "thinking" | "pro";
@@ -62,11 +63,13 @@ export async function POST(req: Request) {
     return single({ type: "error", error: "Please enter a question." });
   }
 
-  // Preview mode — no model key configured.
-  if (!process.env.ANTHROPIC_API_KEY) {
+  // Preview mode — only when NO provider key is configured at all. The
+  // pipelines fail soft per-provider, so any single key is enough to answer
+  // (e.g. Agents/Hybrid run OpenAI-led even with no Anthropic key).
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY && !process.env.PERPLEXITY_API_KEY) {
     return streamReply(
       "⚙️ Preview mode — no model key configured.\n\n" +
-        "Add ANTHROPIC_API_KEY (and optionally OPENAI_API_KEY, PERPLEXITY_API_KEY) " +
+        "Add ANTHROPIC_API_KEY, OPENAI_API_KEY and/or PERPLEXITY_API_KEY " +
         "to .env.local to enable grounded answers from your Obsidian knowledge base.\n\n" +
         `You asked:\n“${message}”`,
       "preview"
@@ -87,11 +90,18 @@ export async function POST(req: Request) {
     attachments: body.attachments,
     images: body.images,
   };
-  // Images need vision — always use the Team/vision path (agent tools can't see images).
-  const events =
-    body.mode === "agent" && !body.images?.length
-      ? agentStream(message, body.history, opts)
-      : answerStream(message, body.history, opts);
+  // FLOWs v0.2 mode routing (docs/intelbot-flows-v0.2.yaml):
+  //   team   → swarm fan-out + synthesis (unchanged, lib/brain.ts)
+  //   agent  → relay pipeline (research → synthesis → final QA)
+  //   hybrid → research-first parallel candidates → comparison → decision
+  // Images always take the Team/vision path — only that path can see them.
+  const events = body.images?.length
+    ? answerStream(message, body.history, opts)
+    : body.mode === "agent"
+    ? relayStream(message, body.history, opts)
+    : body.mode === "hybrid"
+    ? hybridStream(message, body.history, opts)
+    : answerStream(message, body.history, opts);
 
   const stream = new ReadableStream({
     async start(controller) {

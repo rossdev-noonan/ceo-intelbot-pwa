@@ -221,6 +221,78 @@ export async function callOpenAI(
   }
 }
 
+// Streaming variant of the OpenAI call — used by FLOWs stages that stream the
+// final deliverable from GPT (e.g. the Hybrid final-decision stage). Yields
+// text deltas; the generator's return value reports overall success/failure.
+export async function* callOpenAIStream(
+  system: string,
+  user: string,
+  opts: { model?: string; maxTokens?: number; reasoningEffort?: string } = {}
+): AsyncGenerator<string, { ok: boolean; error?: string }, unknown> {
+  const model = opts.model || process.env.OPENAI_MODEL || "gpt-5.5";
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return { ok: false, error: "OPENAI_API_KEY not set" };
+
+  let res: Response;
+  try {
+    res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        stream: true,
+        reasoning_effort: opts.reasoningEffort || "medium",
+        max_completion_tokens: opts.maxTokens ?? MAX_OUTPUT_TOKENS,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      }),
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "fetch failed" };
+  }
+
+  if (!res.ok || !res.body) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const d = await res.json();
+      msg = d?.error?.message || msg;
+    } catch {}
+    return { ok: false, error: msg };
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith("data:")) continue;
+        const payload = t.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const evt = JSON.parse(payload);
+          // OpenAI emits {"error": {...}} mid-stream on failures — surface it
+          // so callers fire their fallback with the real provider error.
+          if (evt?.error) return { ok: false, error: evt.error?.message || "stream error" };
+          const delta = evt?.choices?.[0]?.delta?.content;
+          if (typeof delta === "string" && delta) yield delta;
+        } catch {}
+      }
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "stream read failed" };
+  }
+  return { ok: true };
+}
+
 export async function callPerplexity(
   system: string,
   user: string,
