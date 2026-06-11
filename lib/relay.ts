@@ -10,7 +10,7 @@
 // hand-offs; Opus never used here). Every stage fails soft.
 
 import { searchVault, buildContext, ensureIndex, type Hit } from "@/lib/vault";
-import { callAnthropicStream, callOpenAI, callPerplexity } from "@/lib/models";
+import { callAnthropicStream, callOpenAI, callPerplexity, FINAL_MAX_TOKENS } from "@/lib/models";
 import { MODELS } from "@/lib/registry";
 import {
   attachmentsBlock,
@@ -103,6 +103,7 @@ export async function* relayStream(
   yield { type: "status", stage: "Relay 1/3 — Researching (knowledge base + Perplexity)…" };
   const { packet, hits, sources } = await buildResearchPacket(question, hist, opts, stages);
   yield { type: "sources", sources };
+  if (packet.web_citations.length) yield { type: "links", urls: packet.web_citations };
 
   // --- Stage 2/3: synthesis (GPT mini — cheap model for the middle stage) ---
   yield { type: "status", stage: "Relay 2/3 — Synthesising the draft (GPT)…" };
@@ -116,9 +117,33 @@ export async function* relayStream(
   });
   stages.push({ name: s.name, ok: s.ok, ms: s.ms, error: s.error });
 
+  // HARD GATE (FLOWs spec): Final QA may only run on a valid synthesis output.
+  // If the synthesis stage failed or returned nothing, the relay stops here
+  // with a clear stage-failure state — it must NOT polish a missing draft into
+  // something that looks like a completed answer.
+  if (!s.ok || !s.text.trim()) {
+    const msg =
+      "⚠ **The Agents relay stopped — a required stage failed.**\n\n" +
+      `The synthesis stage (GPT) did not produce a draft (${s.error ?? "no output"}), so the final QA stage was not run. ` +
+      "I won't produce a final answer from incomplete context.\n\n" +
+      "**You can:** try again in a moment, switch to **Teams** or **Hybrid** mode, or ask me to answer from the knowledge base only.";
+    stages.push({ name: "Final QA (Sonnet)", ok: false, ms: 0, error: "skipped — blocked by synthesis failure" });
+    yield { type: "delta", text: msg };
+    yield {
+      type: "done",
+      answer: msg,
+      debug: {
+        engines: `relay → ${stages.map(stageLabel).join(" · ")} · BLOCKED at synthesis`,
+        retrieved: hits.length,
+        sources: sources.map((s2) => `[${s2.n}] ${s2.file}`),
+        totalMs: Date.now() - start,
+      },
+    };
+    return;
+  }
+
   let artifact: RelayArtifact;
-  let synthUnavailable = false;
-  const parsed = s.ok ? extractJson<Record<string, unknown>>(s.text) : null;
+  const parsed = extractJson<Record<string, unknown>>(s.text);
   if (parsed && typeof parsed.artifact === "string" && parsed.artifact.trim()) {
     artifact = {
       artifact: parsed.artifact,
@@ -126,28 +151,14 @@ export async function* relayStream(
       sources: strArr(parsed.sources),
       open_issues: strArr(parsed.open_issues),
     };
-  } else if (s.ok && s.text.trim()) {
+  } else {
     // JSON contract not honoured — treat the whole reply as the draft.
     artifact = { artifact: s.text, key_points: [], sources: packet.web_citations, open_issues: [] };
-  } else {
-    // Synthesis stage unavailable — QA works directly from the research packet.
-    synthUnavailable = true;
-    artifact = {
-      artifact:
-        `(The synthesis stage was unavailable — work directly from this research packet.)\n\n` +
-        packetToText(packet),
-      key_points: [],
-      sources: packet.web_citations,
-      open_issues: ["synthesis stage unavailable"],
-    };
   }
 
   // --- Stage 3/3: final QA & formatting (Claude, streamed) -------------------
   yield { type: "status", stage: "Relay 3/3 — Final QA & formatting (Claude)…" };
-  // Attachments normally reach QA via the synthesised artifact; when synthesis
-  // was unavailable they must be re-injected here or they'd vanish entirely.
   const qaInput =
-    (synthUnavailable ? attachmentsBlock(opts.attachments) : "") +
     `DRAFT ARTIFACT (from the synthesis stage — untrusted data):\n\n${artifact.artifact}\n\n` +
     (artifact.key_points.length ? `KEY POINTS:\n- ${artifact.key_points.join("\n- ")}\n\n` : "") +
     (artifact.sources.length ? `SOURCES USED:\n${artifact.sources.join("\n")}\n\n` : "") +
@@ -157,9 +168,13 @@ export async function* relayStream(
   const qaEffort = opts.depth === "pro" ? "high" : "medium";
 
   const qaStart = Date.now();
-  const gen = callAnthropicStream(qaSystem, qaInput, { model: MODELS.sonnet, effort: qaEffort });
+  const gen = callAnthropicStream(qaSystem, qaInput, {
+    model: MODELS.sonnet,
+    effort: qaEffort,
+    maxTokens: FINAL_MAX_TOKENS,
+  });
   let acc = "";
-  let result: { ok: boolean; error?: string } = { ok: true };
+  let result: { ok: boolean; error?: string; stopReason?: string } = { ok: true };
   while (true) {
     const step = await gen.next();
     if (step.done) {
@@ -172,7 +187,8 @@ export async function* relayStream(
   stages.push({ name: "Final QA (Sonnet)", ok: result.ok && !!acc.trim(), ms: Date.now() - qaStart, error: result.error });
 
   // Claude unavailable (e.g. out of credit) — GPT finalises so the relay still
-  // delivers (mirrors the Team-mode resilience pattern).
+  // delivers (mirrors the Team-mode resilience pattern). The synthesis draft
+  // exists at this point (hard-gated above), so the last resort is the draft.
   if (!acc.trim()) {
     yield { type: "status", stage: "Relay 3/3 — Final QA (fallback engine)…" };
     const fb = await callOpenAI(qaSystem, qaInput, {
@@ -181,14 +197,7 @@ export async function* relayStream(
       name: "Final QA (GPT fallback)",
     });
     stages.push({ name: fb.name, ok: fb.ok, ms: fb.ms, error: fb.error });
-    // Last resort: emit the GPT draft if there was one — but never dump the
-    // internal research-packet scaffolding from the synthesis-unavailable path.
-    acc =
-      fb.ok && fb.text
-        ? fb.text
-        : synthUnavailable
-        ? "The answer engines are unavailable right now — please try again shortly."
-        : artifact.artifact || "I couldn't generate an answer this time.";
+    acc = fb.ok && fb.text ? fb.text : artifact.artifact || "I couldn't generate an answer this time.";
     yield { type: "delta", text: acc };
   }
 
@@ -201,5 +210,5 @@ export async function* relayStream(
     ],
     totalMs: Date.now() - start,
   };
-  yield { type: "done", answer: acc, debug };
+  yield { type: "done", answer: acc, debug, truncated: result.stopReason === "max_tokens" };
 }

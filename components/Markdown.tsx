@@ -60,11 +60,20 @@ const components: Components = {
   td: (p) => <td className="border border-[var(--border-2)] px-3 py-2 align-top" {...p} />,
 };
 
+// Models sometimes wrap an ENTIRE prose answer in a ```markdown fence, which
+// would render the whole reply as one giant code block ("notepad look").
+// Unwrap only the unambiguous case: a single fence labelled markdown/md
+// spanning the whole message. Real code/YAML/JSON fences are untouched.
+function unwrapFullFence(text: string): string {
+  const m = text.trim().match(/^```(?:markdown|md)\s*\n([\s\S]*?)\n?```\s*$/);
+  return m ? m[1] : text;
+}
+
 export default function Markdown({ children }: { children: string }) {
   return (
     <div className="text-[15px] text-[var(--text)]">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {children}
+        {unwrapFullFence(children)}
       </ReactMarkdown>
     </div>
   );

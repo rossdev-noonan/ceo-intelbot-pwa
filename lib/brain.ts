@@ -5,6 +5,7 @@ import {
   callOpenAI,
   callPerplexity,
   parseDataUrl,
+  FINAL_MAX_TOKENS,
   type ModelResult,
 } from "@/lib/models";
 import {
@@ -255,8 +256,9 @@ export async function answer(question: string, history?: Turn[], opts: BrainOpti
 export type StreamEvent =
   | { type: "status"; stage: string }
   | { type: "sources"; sources: Source[] }
+  | { type: "links"; urls: string[] } // web sources used (for the clean Sources UI)
   | { type: "delta"; text: string }
-  | { type: "done"; answer: string; debug: BrainDebug }
+  | { type: "done"; answer: string; debug: BrainDebug; truncated?: boolean }
   | { type: "error"; error: string };
 
 export type BrainDebug = { engines: string; retrieved: number; sources: string[]; totalMs: number };
@@ -323,6 +325,10 @@ export async function* answerStream(
   const ok = all.filter((m) => m.ok && m.text);
   const modelStatus = all.map((m) => ({ name: m.name, ok: m.ok, ms: m.ms, error: m.error }));
 
+  // Web sources from the research analyst (Perplexity) → clean Sources UI.
+  const webUrls = [...new Set(ok.flatMap((m) => m.citations ?? []))];
+  if (webUrls.length) yield { type: "links", urls: webUrls };
+
   const makeDebug = (): BrainDebug => ({
     engines:
       `${routeLabel} → ` +
@@ -338,10 +344,10 @@ export async function* answerStream(
   const gen = callAnthropicStream(
     withInstructions(SYNTH_FULL, opts.instructions),
     buildSynthUser(prep.kb, prep.fullBlock, ok, question),
-    { model: plan.synth.model, effort: plan.synth.effort }
+    { model: plan.synth.model, effort: plan.synth.effort, maxTokens: FINAL_MAX_TOKENS }
   );
   let acc = "";
-  let result: { ok: boolean; error?: string } = { ok: true };
+  let result: { ok: boolean; error?: string; stopReason?: string } = { ok: true };
   while (true) {
     const step = await gen.next();
     if (step.done) {
@@ -371,5 +377,5 @@ export async function* answerStream(
     modelStatus.push({ name: `Synthesiser (${plan.synth.model})`, ok: true, ms: Date.now() - start, error: undefined });
   }
 
-  yield { type: "done", answer: acc, debug: makeDebug() };
+  yield { type: "done", answer: acc, debug: makeDebug(), truncated: result.stopReason === "max_tokens" };
 }

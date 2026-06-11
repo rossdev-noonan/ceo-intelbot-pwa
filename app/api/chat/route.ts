@@ -1,6 +1,8 @@
 import { answerStream, type StreamEvent, type Connectors } from "@/lib/brain";
 import { relayStream } from "@/lib/relay";
 import { hybridStream } from "@/lib/hybrid";
+import { followupStream, continueStream } from "@/lib/followup";
+import { routeMessage } from "@/lib/router";
 import { checkSensitivity, sensitivityRefusal } from "@/lib/sensitivity";
 import { requireUser } from "@/auth";
 
@@ -17,6 +19,10 @@ type Body = {
   depth?: "auto" | "instant" | "thinking" | "pro";
   attachments?: { name: string; text: string }[];
   images?: string[];
+  // Developer debug mode — attach the engines/timings trace to done events.
+  debug?: boolean;
+  // Continue a paused (output-limit) answer from its exact stopping point.
+  continuation?: { tail: string; question: string; openFence?: boolean };
 };
 
 // Streams NDJSON events: {type:"status"|"sources"|"delta"|"done"|"error", ...}
@@ -90,27 +96,44 @@ export async function POST(req: Request) {
     attachments: body.attachments,
     images: body.images,
   };
-  // FLOWs v0.2 mode routing (docs/intelbot-flows-v0.2.yaml):
-  //   team   → swarm fan-out + synthesis (unchanged, lib/brain.ts)
+  // Conversation Mode Router (runs BEFORE any orchestration): paused-answer
+  // continuations and recognisable follow-ups bypass the heavy pipelines.
+  // Everything else takes the FLOWs v0.2 mode routing:
+  //   team   → swarm fan-out + synthesis (lib/brain.ts)
   //   agent  → relay pipeline (research → synthesis → final QA)
   //   hybrid → research-first parallel candidates → comparison → decision
   // Images always take the Team/vision path — only that path can see them.
-  const events = body.images?.length
-    ? answerStream(message, body.history, opts)
-    : body.mode === "agent"
-    ? relayStream(message, body.history, opts)
-    : body.mode === "hybrid"
-    ? hybridStream(message, body.history, opts)
-    : answerStream(message, body.history, opts);
+  const route = body.continuation?.tail
+    ? { path: "continue" as const, reason: "continuation of a paused answer" }
+    : routeMessage(message, body.history, {
+        hasAttachments: !!body.attachments?.length,
+        hasImages: !!body.images?.length,
+      });
+
+  const events =
+    route.path === "continue" && body.continuation
+      ? continueStream(body.continuation, opts)
+      : route.path === "followup" || route.path === "followup_web"
+      ? followupStream(message, body.history, opts, route.path === "followup_web", route.reason)
+      : body.images?.length
+      ? answerStream(message, body.history, opts)
+      : body.mode === "agent"
+      ? relayStream(message, body.history, opts)
+      : body.mode === "hybrid"
+      ? hybridStream(message, body.history, opts)
+      : answerStream(message, body.history, opts);
 
   const stream = new ReadableStream({
     async start(controller) {
       const send = (obj: unknown) => controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
       try {
+        const wantDebug = isDev || !!body.debug;
         for await (const evt of events) {
-          // Strip the debug payload in production.
-          if (evt.type === "done" && !isDev) send({ type: "done", answer: evt.answer });
-          else send(evt);
+          // The debug trace travels only when debug mode asks for it; the
+          // truncated flag is user-facing state and must always survive.
+          if (evt.type === "done" && !wantDebug) {
+            send({ type: "done", answer: evt.answer, truncated: evt.truncated });
+          } else send(evt);
         }
       } catch (e) {
         send({ type: "error", error: e instanceof Error ? e.message : "unknown error" });

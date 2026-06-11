@@ -69,6 +69,15 @@ export default function SettingsModal({
             />
           </div>
 
+          <div className="mt-3">
+            <ToggleRow
+              label="🛠 Developer debug mode"
+              desc="Show engine traces, timings and routing decisions under each answer. Off for normal use — sources have their own clean panel."
+              checked={draft.debugMode}
+              onChange={(v) => setDraft({ ...draft, debugMode: v })}
+            />
+          </div>
+
           <div className="mt-4">
             <label className="block text-sm text-[var(--text)] mb-1">
               Knowledge-base depth: <span className="font-mono text-[var(--muted)]">{c.vaultDepth}</span> excerpts

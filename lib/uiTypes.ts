@@ -3,7 +3,14 @@
 
 export type Connectors = { web: boolean; fetch: boolean; vaultDepth: number };
 export type Depth = "auto" | "instant" | "thinking" | "pro";
-export type Settings = { globalInstructions: string; connectors: Connectors; depth: Depth };
+export type Settings = {
+  globalInstructions: string;
+  connectors: Connectors;
+  depth: Depth;
+  // Developer debug mode: shows engine traces, timings and router decisions
+  // under each answer. Hidden for normal use — sources get their own clean UI.
+  debugMode: boolean;
+};
 export type Project = { id: string; name: string; instructions: string };
 
 export const DEFAULT_CONNECTORS: Connectors = { web: true, fetch: true, vaultDepth: 8 };
@@ -11,6 +18,7 @@ export const DEFAULT_SETTINGS: Settings = {
   globalInstructions: "",
   connectors: DEFAULT_CONNECTORS,
   depth: "auto",
+  debugMode: false,
 };
 
 // Reasoning-depth options for the header selector.

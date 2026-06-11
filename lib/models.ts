@@ -20,6 +20,16 @@ const ANTHROPIC_VERSION = "2023-06-01";
 export const MAX_OUTPUT_TOKENS = Number(process.env.MAX_OUTPUT_TOKENS) || 16000;
 const PERPLEXITY_MAX_TOKENS = Math.min(MAX_OUTPUT_TOKENS, 8000);
 
+// Higher ceiling for STREAMED final stages only (synthesiser/QA/decision) so
+// long deliverables don't truncate at ~64k chars. Streaming avoids HTTP
+// timeouts; non-stream middle stages keep MAX_OUTPUT_TOKENS. When even this is
+// hit, the stream reports stopReason and the UI offers Continue.
+export const FINAL_MAX_TOKENS = Number(process.env.FINAL_MAX_TOKENS) || 32000;
+
+// Stream generators return this: ok/error plus why generation stopped.
+// stopReason "max_tokens" means the answer was truncated by the output limit.
+export type StreamReturn = { ok: boolean; error?: string; stopReason?: string };
+
 function ms(start: number): number {
   return Date.now() - start;
 }
@@ -116,7 +126,7 @@ export async function* callAnthropicStream(
   system: string,
   user: string,
   opts: { model?: string; maxTokens?: number; effort?: string; images?: ImagePart[] } = {}
-): AsyncGenerator<string, { ok: boolean; error?: string }, unknown> {
+): AsyncGenerator<string, StreamReturn, unknown> {
   const model = opts.model || process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return { ok: false, error: "ANTHROPIC_API_KEY not set" };
@@ -157,6 +167,7 @@ export async function* callAnthropicStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
+  let stopReason: string | undefined;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -173,6 +184,8 @@ export async function* callAnthropicStream(
           const evt = JSON.parse(payload);
           if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta") {
             yield evt.delta.text as string;
+          } else if (evt.type === "message_delta" && evt.delta?.stop_reason) {
+            stopReason = evt.delta.stop_reason as string; // "end_turn" | "max_tokens" | ...
           } else if (evt.type === "error") {
             return { ok: false, error: evt.error?.message || "stream error" };
           }
@@ -182,7 +195,7 @@ export async function* callAnthropicStream(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "stream read failed" };
   }
-  return { ok: true };
+  return { ok: true, stopReason };
 }
 
 export async function callOpenAI(
@@ -228,7 +241,7 @@ export async function* callOpenAIStream(
   system: string,
   user: string,
   opts: { model?: string; maxTokens?: number; reasoningEffort?: string } = {}
-): AsyncGenerator<string, { ok: boolean; error?: string }, unknown> {
+): AsyncGenerator<string, StreamReturn, unknown> {
   const model = opts.model || process.env.OPENAI_MODEL || "gpt-5.5";
   const key = process.env.OPENAI_API_KEY;
   if (!key) return { ok: false, error: "OPENAI_API_KEY not set" };
@@ -265,6 +278,7 @@ export async function* callOpenAIStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
+  let stopReason: string | undefined;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -282,7 +296,9 @@ export async function* callOpenAIStream(
           // OpenAI emits {"error": {...}} mid-stream on failures — surface it
           // so callers fire their fallback with the real provider error.
           if (evt?.error) return { ok: false, error: evt.error?.message || "stream error" };
-          const delta = evt?.choices?.[0]?.delta?.content;
+          const choice = evt?.choices?.[0];
+          if (choice?.finish_reason === "length") stopReason = "max_tokens";
+          const delta = choice?.delta?.content;
           if (typeof delta === "string" && delta) yield delta;
         } catch {}
       }
@@ -290,7 +306,7 @@ export async function* callOpenAIStream(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "stream read failed" };
   }
-  return { ok: true };
+  return { ok: true, stopReason };
 }
 
 export async function callPerplexity(

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Markdown from "@/components/Markdown";
 import SettingsModal from "@/components/SettingsModal";
 import ProjectModal from "@/components/ProjectModal";
+import Sources, { DebugTracePanel } from "@/components/Sources";
 import {
   downloadMarkdown,
   downloadCsv,
@@ -25,7 +26,18 @@ import {
 } from "@/lib/uiTypes";
 
 type Role = "user" | "assistant";
-type Msg = { role: Role; content: string; ts: number; debug?: string; id?: string; attachmentNames?: string[]; images?: string[] };
+type Msg = {
+  role: Role;
+  content: string;
+  ts: number;
+  debug?: string;
+  id?: string;
+  attachmentNames?: string[];
+  images?: string[];
+  sources?: { n: number; file: string; heading: string }[]; // KB sources (clean Sources UI)
+  links?: string[]; // web source URLs
+  truncated?: boolean; // paused at the output limit — offer Continue
+};
 type Attachment = { name: string; text: string };
 type Chat = { id: string; title: string; projectId: string; messages: Msg[] };
 
@@ -125,6 +137,7 @@ export default function Home() {
           globalInstructions: p.globalInstructions ?? "",
           connectors: { ...DEFAULT_CONNECTORS, ...(p.connectors || {}) },
           depth: p.depth ?? "auto",
+          debugMode: p.debugMode ?? false,
         };
       }
     } catch {}
@@ -205,6 +218,20 @@ export default function Home() {
     if (lastUserMsgId) scrollQuestionToTop(lastUserMsgId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastUserMsgId, activeId]);
+
+  // Follow the stream only when the user is already near the bottom (spec:
+  // never yank the view away from someone reading higher up).
+  const activeIdRef = useRef(activeId);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+  function followStreamScroll(chatId: string) {
+    if (chatId !== activeIdRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+    if (nearBottom) requestAnimationFrame(() => (el.scrollTop = el.scrollHeight));
+  }
 
   function newChat(projectId?: string) {
     const pid = projectId ?? activeProject?.id ?? projects[0]?.id;
@@ -311,22 +338,34 @@ export default function Home() {
     setStreamingChats((p) => ({ ...p, [chatId]: false }));
     setStatusByChat((p) => ({ ...p, [chatId]: STATUSES[0] }));
 
-    let started = false;
     let acc = "";
-    const upsert = (content: string, debug?: string) => {
+    let received = false; // any delta/done arrived?
+    let kbSources: { n: number; file: string; heading: string }[] = [];
+    let webLinks: string[] = [];
+    // CRITICAL: decide push-vs-update INSIDE the updater by message id. React
+    // runs updaters asynchronously (and may re-run them), so a call-time flag
+    // like the old `started` raced and made the first delta OVERWRITE the last
+    // message — i.e. the user's question — instead of appending the answer.
+    const upsert = (content: string, extra?: Partial<Msg>) => {
       setChats((prev) =>
         prev.map((c) => {
           if (c.id !== chatId) return c;
           const msgs = [...c.messages];
-          if (started) {
-            msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content, debug };
-          } else {
-            msgs.push({ role: "assistant", content, ts: Date.now(), debug, id: assistantId });
-          }
+          const idx = msgs.findIndex((m) => m.id === assistantId);
+          const patch: Msg = {
+            role: "assistant",
+            content,
+            ts: idx >= 0 ? msgs[idx].ts : Date.now(),
+            id: assistantId,
+            sources: kbSources.length ? kbSources : undefined,
+            links: webLinks.length ? webLinks : undefined,
+            ...extra,
+          };
+          if (idx >= 0) msgs[idx] = { ...msgs[idx], ...patch };
+          else msgs.push(patch);
           return { ...c, messages: msgs };
         })
       );
-      started = true;
     };
 
     try {
@@ -343,6 +382,7 @@ export default function Home() {
           depth: settings.depth,
           attachments: sentAttachments.length ? sentAttachments : undefined,
           images: sentImages.length ? sentImages : undefined,
+          debug: settings.debugMode || undefined,
         }),
       });
       if (!res.body) throw new Error("No response stream");
@@ -366,6 +406,9 @@ export default function Home() {
             stage?: string;
             text?: string;
             error?: string;
+            truncated?: boolean;
+            sources?: { n: number; file: string; heading: string }[];
+            urls?: string[];
             debug?: { engines?: string; retrieved?: number; totalMs?: number; sources?: string[] };
           };
           try {
@@ -375,28 +418,125 @@ export default function Home() {
           }
           if (evt.type === "status") {
             setStatusByChat((p) => ({ ...p, [chatId]: evt.stage ?? "" }));
+          } else if (evt.type === "sources") {
+            kbSources = evt.sources ?? [];
+          } else if (evt.type === "links") {
+            webLinks = [...new Set([...webLinks, ...(evt.urls ?? [])])];
           } else if (evt.type === "delta") {
             acc += evt.text ?? "";
+            received = true;
             setStreamingChats((p) => ({ ...p, [chatId]: true }));
-            upsert(acc, debugStr);
+            upsert(acc, { debug: debugStr });
+            followStreamScroll(chatId);
           } else if (evt.type === "error") {
             acc += (acc ? "\n\n" : "") + "⚠ " + (evt.error ?? "error");
-            upsert(acc, debugStr);
+            received = true;
+            upsert(acc, { debug: debugStr });
           } else if (evt.type === "done") {
+            received = true;
             const d = evt.debug;
             if (d) {
               debugStr = `engines: ${d.engines} · retrieved ${d.retrieved} notes · ${d.totalMs}ms\n${(
                 d.sources ?? []
               ).join("\n")}`;
-              upsert(acc, debugStr);
             }
+            upsert(acc, { debug: debugStr, truncated: !!evt.truncated });
           }
         }
       }
-      if (!started) upsert("No response.");
+      if (!received) upsert("No response.");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "unknown error";
       upsert((acc ? acc + "\n\n" : "") + "Error: " + msg);
+    } finally {
+      setLoadingChats((p) => ({ ...p, [chatId]: false }));
+      setStreamingChats((p) => ({ ...p, [chatId]: false }));
+    }
+  }
+
+  // Resume an answer that paused at the output limit: stream the continuation
+  // straight into the SAME message — no new bubbles, numbering preserved.
+  async function continueAnswer(msgId: string) {
+    const chat = chats.find((c) => c.id === activeId);
+    if (!chat || loadingChats[chat.id]) return;
+    const chatId = chat.id;
+    const idx = chat.messages.findIndex((m) => m.id === msgId);
+    if (idx < 0) return;
+    const base = chat.messages[idx].content;
+    let question = "";
+    for (let i = idx - 1; i >= 0; i--) {
+      if (chat.messages[i].role === "user") {
+        question = chat.messages[i].content;
+        break;
+      }
+    }
+
+    setLoadingChats((p) => ({ ...p, [chatId]: true }));
+    setStatusByChat((p) => ({ ...p, [chatId]: "Continuing from where it stopped…" }));
+    const patch = (content: string, extra?: Partial<Msg>) =>
+      setChats((prev) =>
+        prev.map((c) =>
+          c.id === chatId
+            ? { ...c, messages: c.messages.map((m) => (m.id === msgId ? { ...m, content, ...extra } : m)) }
+            : c
+        )
+      );
+    patch(base, { truncated: false });
+
+    let acc = "";
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: "Continue.",
+          conversationId: chatId,
+          continuation: {
+            tail: base.slice(-12000),
+            question,
+            // Fence parity over the FULL draft (the tail window may miss the
+            // opener) — keeps the model from emitting a stray ``` at the seam.
+            openFence: (base.match(/^```/gm) ?? []).length % 2 === 1,
+          },
+          instructions: combinedInstructions,
+          connectors: settings.connectors,
+          depth: settings.depth,
+          debug: settings.debugMode || undefined,
+        }),
+      });
+      if (!res.body) throw new Error("No response stream");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t) continue;
+          let evt: { type: string; text?: string; error?: string; truncated?: boolean };
+          try {
+            evt = JSON.parse(t);
+          } catch {
+            continue;
+          }
+          if (evt.type === "delta") {
+            acc += evt.text ?? "";
+            setStreamingChats((p) => ({ ...p, [chatId]: true }));
+            patch(base + acc);
+            followStreamScroll(chatId);
+          } else if (evt.type === "error") {
+            patch(base + acc + "\n\n⚠ " + (evt.error ?? "error"));
+          } else if (evt.type === "done") {
+            patch(base + acc, { truncated: !!evt.truncated });
+          }
+        }
+      }
+    } catch (e) {
+      patch(base + acc + "\n\n⚠ Continue failed: " + (e instanceof Error ? e.message : "unknown error"));
     } finally {
       setLoadingChats((p) => ({ ...p, [chatId]: false }));
       setStreamingChats((p) => ({ ...p, [chatId]: false }));
@@ -973,11 +1113,27 @@ export default function Home() {
                       </div>
                     );
                   })()}
-                {m.debug && (
-                  <div className="mt-1 max-w-[90%] rounded-md bg-[var(--surface-2)] border border-[var(--border)] px-3 py-2 text-[10px] font-mono text-[var(--muted)] whitespace-pre-wrap break-all">
-                    {m.debug}
+                {/* Paused at the output limit — clean continuation, no silent truncation. */}
+                {m.role === "assistant" && m.truncated && !activeLoading && (
+                  <div className="ib-pop mt-2 flex items-center gap-2 rounded-lg border border-[var(--border-2)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--muted)]">
+                    <span>⏸ Long answer — paused at a clean stopping point.</span>
+                    <button
+                      onClick={() => m.id && continueAnswer(m.id)}
+                      className="rounded-md bg-[var(--accent)] px-2.5 py-1 text-white hover:bg-[var(--accent-hover)] transition-colors"
+                    >
+                      Continue
+                    </button>
                   </div>
                 )}
+                {/* Clean Sources UI — replaces the raw notes/URL dump. */}
+                {m.role === "assistant" &&
+                  m.content &&
+                  !(activeLoading && i === (active?.messages.length ?? 0) - 1) &&
+                  (m.sources?.length || m.links?.length) ? (
+                  <Sources kb={m.sources ?? []} web={m.links ?? []} />
+                ) : null}
+                {/* Engine trace — developers only, behind the Settings toggle. */}
+                {settings.debugMode && m.debug && <DebugTracePanel trace={m.debug} />}
               </div>
             ))}
             {activeLoading && !activeStreaming && (

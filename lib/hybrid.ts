@@ -10,7 +10,7 @@
 // Deterministic orchestration; strict structured outputs between stages; the
 // decision stage merges — it never restarts the task. Every stage fails soft.
 
-import { callAnthropic, callAnthropicStream, callOpenAI, callOpenAIStream } from "@/lib/models";
+import { callAnthropic, callAnthropicStream, callOpenAI, callOpenAIStream, FINAL_MAX_TOKENS } from "@/lib/models";
 import { MODELS } from "@/lib/registry";
 import {
   attachmentsBlock,
@@ -90,6 +90,7 @@ export async function* hybridStream(
   yield { type: "status", stage: "Hybrid 1/4 — Researching first (knowledge base + Perplexity)…" };
   const { packet, hits, sources } = await buildResearchPacket(question, hist, opts, stages);
   yield { type: "sources", sources };
+  if (packet.web_citations.length) yield { type: "links", urls: packet.web_citations };
 
   // --- Stage 2: parallel candidates from the SAME research packet -----------
   yield { type: "status", stage: "Hybrid 2/4 — GPT and Claude drafting in parallel…" };
@@ -171,9 +172,10 @@ export async function* hybridStream(
   const gen = callOpenAIStream(decisionSystem, decisionInput, {
     model: MODELS.gptFlagship,
     reasoningEffort: reasoning.openaiEffort,
+    maxTokens: FINAL_MAX_TOKENS,
   });
   let acc = "";
-  let result: { ok: boolean; error?: string } = { ok: true };
+  let result: { ok: boolean; error?: string; stopReason?: string } = { ok: true };
   while (true) {
     const step = await gen.next();
     if (step.done) {
@@ -192,8 +194,9 @@ export async function* hybridStream(
     const fb = callAnthropicStream(decisionSystem, decisionInput, {
       model: MODELS.opus,
       effort: reasoning.claudeEffort,
+      maxTokens: FINAL_MAX_TOKENS,
     });
-    let fbResult: { ok: boolean; error?: string } = { ok: true };
+    let fbResult: { ok: boolean; error?: string; stopReason?: string } = { ok: true };
     while (true) {
       const step = await fb.next();
       if (step.done) {
@@ -204,6 +207,7 @@ export async function* hybridStream(
       yield { type: "delta", text: step.value };
     }
     stages.push({ name: "Decision (Claude fallback)", ok: fbResult.ok && !!acc.trim(), ms: Date.now() - fbStart, error: fbResult.error });
+    result = fbResult;
     if (!acc.trim()) {
       const best =
         gptCand && claudeCand
@@ -229,5 +233,5 @@ export async function* hybridStream(
     ],
     totalMs: Date.now() - start,
   };
-  yield { type: "done", answer: acc, debug };
+  yield { type: "done", answer: acc, debug, truncated: result.stopReason === "max_tokens" };
 }
