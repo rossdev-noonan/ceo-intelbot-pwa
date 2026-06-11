@@ -420,6 +420,10 @@ export default function Home() {
     }
 
     for (const file of toAdd) {
+      if (file.size > 30 * 1024 * 1024) {
+        alert(`"${file.name}" is too large (max 30MB).`);
+        continue;
+      }
       if (file.type.startsWith("image/")) {
         addImageFile(file);
         continue;

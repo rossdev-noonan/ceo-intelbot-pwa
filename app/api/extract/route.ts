@@ -170,11 +170,23 @@ export async function POST(req: Request) {
   const gate = await requireUser();
   if (!gate.ok) return new Response("Unauthorized", { status: 401 });
 
+  // Reject oversize uploads up front by Content-Length. The platform buffers the
+  // body to a fixed limit (see next.config proxyClientMaxBodySize) and truncates
+  // beyond it, which makes formData() throw — catch that case cleanly instead of
+  // letting it surface as a confusing "no file" error.
+  const declared = Number(req.headers.get("content-length") || 0);
+  if (declared && declared > MAX_FILE_BYTES + 1024 * 1024) {
+    return Response.json({ error: "File too large (max 30MB)." }, { status: 413 });
+  }
+
   let form: FormData;
   try {
     form = await req.formData();
   } catch {
-    return Response.json({ error: "No file received." }, { status: 400 });
+    return Response.json(
+      { error: "Upload failed — the file may be too large (max 30MB) or the connection dropped. Try a smaller file." },
+      { status: 400 }
+    );
   }
   const file = form.get("file");
   if (!(file instanceof File)) return Response.json({ error: "No file received." }, { status: 400 });
