@@ -24,9 +24,9 @@ export default function ProjectModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="ib-fade fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-lg rounded-2xl bg-[var(--panel)] border border-[var(--border-2)] p-5"
+        className="ib-pop w-full max-w-lg rounded-2xl bg-[var(--panel)] border border-[var(--border-2)] p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">

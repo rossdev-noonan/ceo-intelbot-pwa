@@ -67,6 +67,17 @@ function historyBlock(history?: Turn[]): string {
 
 type Source = { n: number; file: string; heading: string; score: number };
 
+// Does the question actually need the WHOLE top note reproduced? Injecting the
+// full note (up to ~15k tokens) into the synthesiser on every turn is expensive
+// and only pays off when the user wants complete/verbatim content. The numbered
+// excerpts ground every other answer. Keep this generous — when in doubt, the
+// excerpts are still present; this only decides whether to ALSO attach the note.
+function wantsFullNote(question: string): boolean {
+  return /\b(full|complete|entire|whole|everything|all (?:of |the )?(?:items|examples|scenarios|steps|points|scripts)|every (?:item|example|scenario|step|point|script)|word[- ]for[- ]word|verbatim|reproduce|in full|the (?:full|complete|entire|whole) (?:note|document|process|procedure|policy|list)|list (?:them )?all)\b/i.test(
+    question
+  );
+}
+
 async function prepare(question: string, history?: Turn[], depth = 8, attachment?: Attachment) {
   await ensureIndex();
   const hits: Hit[] = searchVault(question, depth);
@@ -74,10 +85,14 @@ async function prepare(question: string, history?: Turn[], depth = 8, attachment
   const sources: Source[] = hits.map((h, i) => ({ n: i + 1, file: h.file, heading: h.heading, score: h.score }));
   const hist = historyBlock(history);
 
+  // Only attach the full top note when the question asks for complete/verbatim
+  // content. Otherwise the numbered excerpts alone ground the answer at a
+  // fraction of the input cost. (Gate is reversible — widen wantsFullNote() if
+  // detailed answers start missing source content.)
   const topFile = hits[0]?.file;
-  const fullText = topFile ? getFileText(topFile, 60000) : "";
+  const fullText = topFile && wantsFullNote(question) ? getFileText(topFile, 60000) : "";
   const fullBlock = fullText
-    ? `Full source note "${topFile}" (use it in full when the question asks for complete or detailed content, e.g. reproducing all items/examples):\n\n${fullText}\n\n`
+    ? `Full source note "${topFile}" (the user asked for complete/detailed content — use it in full, reproducing all items/examples):\n\n${fullText}\n\n`
     : "";
 
   // A user-uploaded document to analyse (untrusted content, not instructions).

@@ -582,7 +582,7 @@ export default function Home() {
     return (
       <div className="mx-auto w-full max-w-3xl">
         {(attachment || attaching) && (
-          <div className="mb-2">
+          <div className="ib-pop mb-2">
             <span className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-2)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text)]">
               📎 {attaching ? "Reading file…" : attachment?.name}
               {attachment && (
@@ -594,7 +594,7 @@ export default function Home() {
           </div>
         )}
         {images.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-2">
+          <div className="ib-pop mb-2 flex flex-wrap gap-2">
             {images.map((src, idx) => (
               <div key={idx} className="relative">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -625,7 +625,7 @@ export default function Home() {
             >
               +
             </summary>
-            <div className="absolute bottom-full left-0 mb-2 w-56 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl z-20">
+            <div className="ib-pop absolute bottom-full left-0 mb-2 w-56 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl z-20">
               {menuItem("📎 Attach a file (PDF/text)", () => fileRef.current?.click())}
               {menuItem(`🌐 Web search: ${settings.connectors.web ? "On" : "Off"}`, () =>
                 setSettings((s) => ({ ...s, connectors: { ...s.connectors, web: !s.connectors.web } }))
@@ -670,16 +670,19 @@ export default function Home() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/50 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
+      {/* Mobile backdrop — fades in/out, stays mounted so it can animate both ways. */}
+      <div
+        aria-hidden
+        onClick={() => setSidebarOpen(false)}
+        className={`fixed inset-0 z-30 bg-black/50 md:hidden transition-opacity duration-300 ${
+          sidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+      />
+      {/* Sidebar — slides on mobile (translate), collapses width on desktop. */}
       <aside
-        className={`${
-          sidebarOpen ? "flex" : "hidden"
-        } fixed md:static z-40 h-full w-64 flex-col bg-[var(--sidebar)]`}
+        className={`fixed md:static z-40 h-full w-64 flex flex-col bg-[var(--sidebar)] overflow-hidden transition-all duration-300 ease-in-out ${
+          sidebarOpen ? "translate-x-0 md:w-64" : "-translate-x-full md:translate-x-0 md:w-0"
+        }`}
       >
         <div className="p-3 space-y-2">
           <button
@@ -884,7 +887,7 @@ export default function Home() {
                           >
                             ⬇ Download
                           </summary>
-                          <div className="absolute z-20 mt-1 w-40 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl">
+                          <div className="ib-pop absolute z-20 mt-1 w-40 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl">
                             {menuItem("PDF", () => {
                               const el = getMsgEl(m.id);
                               if (el) printAnswer(el.innerHTML, title, q);

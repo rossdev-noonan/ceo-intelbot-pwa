@@ -32,6 +32,15 @@ export function parseDataUrl(url: string): ImagePart | null {
   return { mediaType: m[1], data: m[2] };
 }
 
+// Mark the system prompt as cacheable (ephemeral, ~5-min TTL). cache_control is
+// GA — no beta header needed. It only caches when the rendered prefix clears the
+// model's minimum (4096 tokens for Opus/Haiku, 2048 for Sonnet); below that it
+// silently no-ops, so this is safe to send on every call. Pays off on the
+// Sonnet-tier synthesiser and any large-context follow-ups within the window.
+function cachedSystem(system: string) {
+  return [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+}
+
 // Build an Anthropic user-content array with optional image blocks.
 function anthropicContent(text: string, images?: ImagePart[]) {
   if (!images?.length) return text;
@@ -79,7 +88,7 @@ export async function callAnthropic(
       body: JSON.stringify({
         model,
         max_tokens: maxTokens,
-        system,
+        system: cachedSystem(system),
         ...think.body,
         messages: [{ role: "user", content: user }],
       }),
@@ -126,7 +135,7 @@ export async function* callAnthropicStream(
       body: JSON.stringify({
         model,
         max_tokens: maxTokens,
-        system,
+        system: cachedSystem(system),
         stream: true,
         ...think.body,
         messages: [{ role: "user", content: anthropicContent(user, opts.images) }],
