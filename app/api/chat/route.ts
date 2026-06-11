@@ -14,7 +14,7 @@ type Body = {
   instructions?: string;
   connectors?: Connectors;
   depth?: "auto" | "instant" | "thinking" | "pro";
-  attachment?: { name: string; text: string };
+  attachments?: { name: string; text: string }[];
   images?: string[];
 };
 
@@ -84,7 +84,7 @@ export async function POST(req: Request) {
     instructions: body.instructions,
     connectors: body.connectors,
     depth: body.depth,
-    attachment: body.attachment,
+    attachments: body.attachments,
     images: body.images,
   };
   // Images need vision — always use the Team/vision path (agent tools can't see images).

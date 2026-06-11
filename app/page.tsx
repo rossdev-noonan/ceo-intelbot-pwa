@@ -25,9 +25,12 @@ import {
 } from "@/lib/uiTypes";
 
 type Role = "user" | "assistant";
-type Msg = { role: Role; content: string; ts: number; debug?: string; id?: string; attachmentName?: string; images?: string[] };
+type Msg = { role: Role; content: string; ts: number; debug?: string; id?: string; attachmentNames?: string[]; images?: string[] };
 type Attachment = { name: string; text: string };
 type Chat = { id: string; title: string; projectId: string; messages: Msg[] };
+
+// Max files + images that can be attached to a single message.
+const MAX_UPLOADS = 10;
 
 const LS_KEY = "intelbot_chats_v1";
 const LS_PROJECTS = "intelbot_projects_v1";
@@ -64,7 +67,7 @@ export default function Home() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectModal, setProjectModal] = useState<{ project: Project; isNew: boolean } | null>(null);
-  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [images, setImages] = useState<string[]>([]); // pasted/attached image data URLs
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -271,21 +274,24 @@ export default function Home() {
 
   async function send() {
     let text = input.trim();
-    if ((!text && !attachment && !images.length) || !active || loadingChats[active.id]) return;
-    if (!text && images.length) text = "What's in this image?";
-    else if (!text && attachment) text = `Please analyse the attached document "${attachment.name}".`;
+    if ((!text && !attachments.length && !images.length) || !active || loadingChats[active.id]) return;
+    if (!text) {
+      if (images.length && attachments.length) text = "Analyse the attached files and image(s).";
+      else if (images.length) text = images.length > 1 ? "What's in these images?" : "What's in this image?";
+      else text = `Please analyse the attached file(s): ${attachments.map((a) => a.name).join(", ")}.`;
+    }
     const chatId = active.id; // capture — the user may switch chats mid-stream
-    const sentAttachment = attachment;
+    const sentAttachments = attachments;
     const sentImages = images;
     setInput("");
-    setAttachment(null);
+    setAttachments([]);
     setImages([]);
     const userMsg: Msg = {
       role: "user",
       content: text,
       ts: Date.now(),
       id: uid(),
-      attachmentName: sentAttachment?.name,
+      attachmentNames: sentAttachments.length ? sentAttachments.map((a) => a.name) : undefined,
       images: sentImages.length ? sentImages : undefined,
     };
     const assistantId = uid();
@@ -335,7 +341,7 @@ export default function Home() {
           instructions: combinedInstructions,
           connectors: settings.connectors,
           depth: settings.depth,
-          attachment: sentAttachment ?? undefined,
+          attachments: sentAttachments.length ? sentAttachments : undefined,
           images: sentImages.length ? sentImages : undefined,
         }),
       });
@@ -398,25 +404,39 @@ export default function Home() {
   }
 
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-picking the same file
-    if (!file) return;
-    if (file.type.startsWith("image/")) {
-      addImageFile(file);
+    const list = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = ""; // allow re-picking the same file(s)
+    if (!list.length) return;
+
+    // Bound the whole selection by the remaining capacity (images + files).
+    const remaining = MAX_UPLOADS - (attachments.length + images.length);
+    if (remaining <= 0) {
+      alert(`You can attach up to ${MAX_UPLOADS} items at once. Remove some first.`);
       return;
     }
-    setAttaching(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/extract", { method: "POST", body: fd });
-      const data = await res.json().catch(() => ({ error: "Bad response" }));
-      if (!res.ok || data.error) alert(data.error || "Could not read that file.");
-      else setAttachment({ name: data.name, text: data.text });
-    } catch (err) {
-      alert("Upload failed: " + (err instanceof Error ? err.message : "error"));
-    } finally {
-      setAttaching(false);
+    const toAdd = list.slice(0, remaining);
+    if (list.length > toAdd.length) {
+      alert(`Limit is ${MAX_UPLOADS} items — added the first ${toAdd.length}, skipped ${list.length - toAdd.length}.`);
+    }
+
+    for (const file of toAdd) {
+      if (file.type.startsWith("image/")) {
+        addImageFile(file);
+        continue;
+      }
+      setAttaching(true);
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/extract", { method: "POST", body: fd });
+        const data = await res.json().catch(() => ({ error: "Bad response" }));
+        if (!res.ok || data.error) alert(`${data.error || "Could not read that file."} (${file.name})`);
+        else setAttachments((prev) => [...prev, { name: data.name, text: data.text }]);
+      } catch (err) {
+        alert(`Upload failed for ${file.name}: ` + (err instanceof Error ? err.message : "error"));
+      } finally {
+        setAttaching(false);
+      }
     }
   }
 
@@ -432,13 +452,16 @@ export default function Home() {
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const items = e.clipboardData?.items;
     if (!items) return;
+    let slots = MAX_UPLOADS - (attachments.length + images.length);
     let handled = false;
     for (const it of items) {
       if (it.type.startsWith("image/")) {
+        handled = true;
+        if (slots <= 0) continue;
         const f = it.getAsFile();
         if (f) {
           addImageFile(f);
-          handled = true;
+          slots--;
         }
       }
     }
@@ -581,16 +604,28 @@ export default function Home() {
   function composer() {
     return (
       <div className="mx-auto w-full max-w-3xl">
-        {(attachment || attaching) && (
-          <div className="ib-pop mb-2">
-            <span className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-2)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text)]">
-              📎 {attaching ? "Reading file…" : attachment?.name}
-              {attachment && (
-                <button onClick={() => setAttachment(null)} className="text-[var(--muted-2)] hover:text-[var(--danger)]" title="Remove">
+        {(attachments.length > 0 || attaching) && (
+          <div className="ib-pop mb-2 flex flex-wrap gap-2">
+            {attachments.map((a, idx) => (
+              <span
+                key={idx}
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-2)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text)]"
+              >
+                <span className="max-w-[180px] truncate">📎 {a.name}</span>
+                <button
+                  onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
+                  className="text-[var(--muted-2)] hover:text-[var(--danger)]"
+                  title="Remove"
+                >
                   ✕
                 </button>
-              )}
-            </span>
+              </span>
+            ))}
+            {attaching && (
+              <span className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-2)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--muted)]">
+                📎 Reading file…
+              </span>
+            )}
           </div>
         )}
         {images.length > 0 && (
@@ -614,6 +649,7 @@ export default function Home() {
           ref={fileRef}
           type="file"
           hidden
+          multiple
           accept=".pdf,.docx,.xlsx,.xls,.pptx,.zip,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.log,.css,.scss,.sql,.toml,.ini,.js,.jsx,.ts,.tsx,.py,.rb,.php,.java,.go,.rs,.c,.h,.cpp,.cs,.sh,text/*,image/*"
           onChange={onPickFile}
         />
@@ -626,7 +662,7 @@ export default function Home() {
               +
             </summary>
             <div className="ib-pop absolute bottom-full left-0 mb-2 w-56 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl z-20">
-              {menuItem("📎 Attach a file (PDF, Office, ZIP, code…)", () => fileRef.current?.click())}
+              {menuItem("📎 Attach files (PDF, Office, ZIP, code…)", () => fileRef.current?.click())}
               {menuItem(`🌐 Web search: ${settings.connectors.web ? "On" : "Off"}`, () =>
                 setSettings((s) => ({ ...s, connectors: { ...s.connectors, web: !s.connectors.web } }))
               )}
@@ -654,7 +690,7 @@ export default function Home() {
           </button>
           <button
             onClick={send}
-            disabled={activeLoading || (!input.trim() && !attachment && images.length === 0)}
+            disabled={activeLoading || (!input.trim() && attachments.length === 0 && images.length === 0)}
             title="Send"
             className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-30"
           >
@@ -846,11 +882,18 @@ export default function Home() {
                               ))}
                             </div>
                           ) : null}
-                          {m.attachmentName && (
-                            <div className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-[var(--hover)] px-2 py-1 text-xs text-[var(--accent-text)]">
-                              📎 {m.attachmentName}
+                          {m.attachmentNames?.length ? (
+                            <div className="mb-2 flex flex-wrap gap-1.5">
+                              {m.attachmentNames.map((n, k) => (
+                                <span
+                                  key={k}
+                                  className="inline-flex items-center gap-1.5 rounded-md bg-[var(--hover)] px-2 py-1 text-xs text-[var(--accent-text)]"
+                                >
+                                  📎 {n}
+                                </span>
+                              ))}
                             </div>
-                          )}
+                          ) : null}
                           <div className={long && !exp ? "max-h-28 overflow-hidden" : ""}>
                             {m.content}
                           </div>
