@@ -1061,23 +1061,52 @@ export default function Home() {
             >
               {theme === "dark" ? "☀️" : "🌙"}
             </button>
-            <select
-              value={activeFlow && activeFlow.depth !== "default" ? activeFlow.depth : settings.depth}
-              disabled={!!activeFlow && activeFlow.depth !== "default"}
-              onChange={(e) => setSettings((s) => ({ ...s, depth: e.target.value as Depth }))}
-              title={
-                activeFlow && activeFlow.depth !== "default"
-                  ? `Pinned by the "${activeFlow.name}" FLOW`
-                  : DEPTHS.find((d) => d.id === settings.depth)?.hint
-              }
-              className="rounded-lg border border-[var(--border-2)] bg-[var(--panel)] px-2 py-1.5 text-[var(--text)] outline-none hover:border-[var(--accent)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {DEPTHS.map((d) => (
-                <option key={d.id} value={d.id} className="bg-[var(--panel)]">
-                  {d.label}
-                </option>
-              ))}
-            </select>
+            {(() => {
+              // Custom dropdown (not native <select>) so the open menu uses the
+              // brand red for the selected item — native popups render their own
+              // blue highlight on Windows that CSS can't reliably override.
+              const depthPinned = !!activeFlow && activeFlow.depth !== "default";
+              const effectiveDepth = depthPinned ? (activeFlow!.depth as Depth) : settings.depth;
+              const curLabel = DEPTHS.find((d) => d.id === effectiveDepth)?.label ?? "Auto";
+              return (
+                <details className="relative">
+                  <summary
+                    title={
+                      depthPinned
+                        ? `Pinned by the "${activeFlow!.name}" FLOW`
+                        : DEPTHS.find((d) => d.id === settings.depth)?.hint
+                    }
+                    className={`flex items-center gap-1 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] px-2 py-1.5 text-[var(--text)] select-none list-none [&::-webkit-details-marker]:hidden ${
+                      depthPinned
+                        ? "opacity-50 pointer-events-none cursor-not-allowed"
+                        : "cursor-pointer hover:border-[var(--accent)]"
+                    }`}
+                  >
+                    {curLabel}
+                    <span className="text-[10px] text-[var(--muted-2)]">▾</span>
+                  </summary>
+                  <div className="ib-pop absolute right-0 z-30 mt-1 w-36 rounded-lg border border-[var(--border-2)] bg-[var(--panel)] p-1 shadow-xl">
+                    {DEPTHS.map((d) => (
+                      <button
+                        key={d.id}
+                        title={d.hint}
+                        onClick={(e) => {
+                          setSettings((s) => ({ ...s, depth: d.id }));
+                          (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                        }}
+                        className={`block w-full rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                          settings.depth === d.id
+                            ? "bg-[var(--accent)] text-white"
+                            : "text-[var(--text)] hover:bg-[var(--hover)]"
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              );
+            })()}
             {(() => {
               // A FLOW that pins its engine greys the toggle out (the pin wins
               // in send()) — controls must never look active while ignored.
@@ -1090,7 +1119,7 @@ export default function Home() {
                   title={pinned ? `Engine pinned by the "${activeFlow!.name}" FLOW` : hint}
                   className={`rounded-md px-2.5 py-1 transition-colors disabled:cursor-not-allowed ${
                     shown === id
-                      ? `bg-[var(--user-bubble)] text-white ${pinned ? "opacity-60" : ""}`
+                      ? `bg-[var(--accent)] text-white ${pinned ? "opacity-60" : ""}`
                       : `text-[var(--muted)] ${pinned ? "opacity-40" : "hover:text-[var(--text)]"}`
                   }`}
                 >

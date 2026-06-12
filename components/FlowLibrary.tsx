@@ -191,7 +191,7 @@ export default function FlowLibrary({
                 onClick={() => setCategory(c)}
                 className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
                   category === c
-                    ? "bg-[var(--user-bubble)] text-white"
+                    ? "bg-[var(--accent)] text-white"
                     : "text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
                 }`}
               >
