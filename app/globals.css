@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-/* ---- Theme tokens. Dark is default; `.light` on <html> switches to light. ---- */
+/* ---- Theme tokens. Dark is default; `.light` on <html> switches to light.
+   Accent = Noonan red (#c42032). ---- */
 :root {
   color-scheme: dark;
   --bg: #0a0a0c;          /* page / chat area — near-black, ChatGPT-dark */
@@ -11,8 +12,8 @@
   --border: #25262c;
   --border-2: #34353d;
   --hover: #1d1e24;
-  --accent: #2b6fb3;
-  --accent-hover: #357ec7;
+  --accent: #c42032;        /* Noonan red — CTAs, toggles, hovers */
+  --accent-hover: #a81b2a;  /* darker red for hover/active */
   --user-bubble: #1f3a5c;
   --accent-text: #6db3f2;
   --text-strong: #f2f2f5;
@@ -25,15 +26,15 @@
 html.light {
   color-scheme: light;
   --bg: #ffffff;
-  --sidebar: #f7f8fa;
+  --sidebar: #f4f1ea;     /* warm cream — light-mode side nav */
   --panel: #ffffff;
   --surface: #f3f4f6;
   --surface-2: #eceef1;
   --border: #e4e7eb;
   --border-2: #d6dae0;
   --hover: #eceef1;
-  --accent: #2b6fb3;
-  --accent-hover: #2563a0;
+  --accent: #c42032;        /* Noonan red — CTAs, toggles, hovers */
+  --accent-hover: #a81b2a;  /* darker red for hover/active */
   --user-bubble: #2b6fb3;
   --accent-text: #1a5fb4;
   --text-strong: #0d1117;
