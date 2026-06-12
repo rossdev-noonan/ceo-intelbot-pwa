@@ -11,7 +11,7 @@
 
 import { callAnthropicStream, callOpenAI, callPerplexity, FINAL_MAX_TOKENS } from "@/lib/models";
 import { MODELS } from "@/lib/registry";
-import { type StreamEvent, type BrainOptions, type BrainDebug } from "@/lib/brain";
+import { attachmentsBlock, type StreamEvent, type BrainOptions, type BrainDebug } from "@/lib/brain";
 import { FOLLOWUP_SYSTEM, CONTINUE_SYSTEM, APP_CAPABILITIES, withInstructions } from "@/lib/prompts";
 
 type Turn = { role: string; content: string };
@@ -65,8 +65,11 @@ export async function* followupStream(
   yield { type: "status", stage: "Quick follow-up…" };
 
   const system = withInstructions(`${FOLLOWUP_SYSTEM}\n\n${APP_CAPABILITIES}`, opts.instructions);
+  // FLOW knowledge (and any user attachments) must stay available on cheap
+  // follow-up turns too — a specialist that forgets its handbook isn't one.
   const user =
     contextPacket(history) +
+    attachmentsBlock(opts.attachments) +
     (web
       ? "If current external facts are needed to answer, check the web and cite source URLs.\n\n"
       : "Answer from the conversation context — do not search the web.\n\n") +

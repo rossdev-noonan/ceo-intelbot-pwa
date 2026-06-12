@@ -3,6 +3,8 @@ import { relayStream } from "@/lib/relay";
 import { hybridStream } from "@/lib/hybrid";
 import { followupStream, continueStream } from "@/lib/followup";
 import { routeMessage } from "@/lib/router";
+import { flowInstructions, type FlowConfig } from "@/lib/prompts";
+import { FLOW_DOC_MAX, FLOW_KNOWLEDGE_MAX } from "@/lib/uiTypes";
 import { checkSensitivity, sensitivityRefusal } from "@/lib/sensitivity";
 import { requireUser } from "@/auth";
 
@@ -23,6 +25,8 @@ type Body = {
   debug?: boolean;
   // Continue a paused (output-limit) answer from its exact stopping point.
   continuation?: { tail: string; question: string; openFence?: boolean };
+  // Active FLOW (custom specialist assistant): behaviour config + knowledge.
+  flow?: FlowConfig & { knowledge?: { name: string; text: string }[] };
 };
 
 // Streams NDJSON events: {type:"status"|"sources"|"delta"|"done"|"error", ...}
@@ -89,11 +93,34 @@ export async function POST(req: Request) {
     return streamReply(sensitivityRefusal(sens.categories), `blocked: sensitivity gate (${sens.categories.join(", ")})`);
   }
 
+  // FLOW runtime: the FLOW's behaviour block leads the instruction stack
+  // (operator/global instructions still apply after it), and its knowledge
+  // docs ride the attachments channel — every pipeline already treats those
+  // as untrusted data with combined-size budgeting.
+  let instructions = body.instructions;
+  let attachments = body.attachments;
+  if (body.flow?.name) {
+    instructions = [flowInstructions(body.flow), body.instructions].filter(Boolean).join("\n\n");
+    let budget = FLOW_KNOWLEDGE_MAX;
+    const knowledge = (body.flow.knowledge ?? [])
+      .filter((k) => k?.text?.trim())
+      .map((k) => {
+        const text = k.text.slice(0, Math.max(0, Math.min(FLOW_DOC_MAX, budget)));
+        budget -= text.length;
+        // origin:"flow" → attachmentsBlock frames these as FLOW configuration
+        // (no-expose), not user uploads; pipelines exclude them from notes
+        // sent to external research.
+        return { name: k.name, text, origin: "flow" as const };
+      })
+      .filter((k) => k.text.length > 0);
+    if (knowledge.length) attachments = [...knowledge, ...(body.attachments ?? [])];
+  }
+
   const opts = {
-    instructions: body.instructions,
+    instructions,
     connectors: body.connectors,
     depth: body.depth,
-    attachments: body.attachments,
+    attachments,
     images: body.images,
   };
   // Conversation Mode Router (runs BEFORE any orchestration): paused-answer
@@ -114,7 +141,15 @@ export async function POST(req: Request) {
     route.path === "continue" && body.continuation
       ? continueStream(body.continuation, opts)
       : route.path === "followup" || route.path === "followup_web"
-      ? followupStream(message, body.history, opts, route.path === "followup_web", route.reason)
+      ? followupStream(
+          message,
+          body.history,
+          opts,
+          // A freshness follow-up still respects the web connector / FLOW
+          // webSearch=false — never search when the toggle says off.
+          route.path === "followup_web" && (body.connectors?.web ?? true),
+          route.reason
+        )
       : body.images?.length
       ? answerStream(message, body.history, opts)
       : body.mode === "agent"

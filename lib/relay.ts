@@ -61,9 +61,12 @@ export async function buildResearchPacket(
   if (!web) return { packet, hits, sources };
 
   // Attachments are analysed by later stages — the researcher only needs to
-  // know they exist so it researches the surrounding public context.
-  const attNote = opts.attachments?.length
-    ? `(The user attached: ${opts.attachments.map((a) => a.name).join(", ")}. A later stage analyses them — research the public/current context only.)\n`
+  // know they exist so it researches the surrounding public context. FLOW
+  // knowledge titles are internal configuration — never sent to external
+  // research providers.
+  const userDocs = (opts.attachments ?? []).filter((a) => a.origin !== "flow");
+  const attNote = userDocs.length
+    ? `(The user attached: ${userDocs.map((a) => a.name).join(", ")}. A later stage analyses them — research the public/current context only.)\n`
     : "";
   // No tighter token cap here: sonar-reasoning-pro spends tokens on hidden
   // reasoning first, so a low cap truncates the JSON. The standard Perplexity

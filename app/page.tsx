@@ -5,6 +5,8 @@ import Markdown from "@/components/Markdown";
 import SettingsModal from "@/components/SettingsModal";
 import ProjectModal from "@/components/ProjectModal";
 import Sources, { DebugTracePanel } from "@/components/Sources";
+import FlowLibrary from "@/components/FlowLibrary";
+import FlowBuilder from "@/components/FlowBuilder";
 import {
   downloadMarkdown,
   downloadCsv,
@@ -20,7 +22,9 @@ import {
   DEFAULT_SETTINGS,
   DEFAULT_CONNECTORS,
   DEPTHS,
+  defaultFlow,
   type Depth,
+  type Flow,
   type Project,
   type Settings,
 } from "@/lib/uiTypes";
@@ -39,7 +43,7 @@ type Msg = {
   truncated?: boolean; // paused at the output limit — offer Continue
 };
 type Attachment = { name: string; text: string };
-type Chat = { id: string; title: string; projectId: string; messages: Msg[] };
+type Chat = { id: string; title: string; projectId: string; messages: Msg[]; flowId?: string };
 
 // Max files + images that can be attached to a single message.
 const MAX_UPLOADS = 10;
@@ -47,6 +51,7 @@ const MAX_UPLOADS = 10;
 const LS_KEY = "intelbot_chats_v1";
 const LS_PROJECTS = "intelbot_projects_v1";
 const LS_SETTINGS = "intelbot_settings_v1";
+const LS_FLOWS = "intelbot_flows_v1";
 
 const STATUSES = [
   "Searching the knowledge base…",
@@ -79,6 +84,9 @@ export default function Home() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectModal, setProjectModal] = useState<{ project: Project; isNew: boolean } | null>(null);
+  const [flows, setFlows] = useState<Flow[]>([]);
+  const [flowsOpen, setFlowsOpen] = useState(false);
+  const [flowModal, setFlowModal] = useState<{ flow: Flow; isNew: boolean } | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [images, setImages] = useState<string[]>([]); // pasted/attached image data URLs
@@ -184,7 +192,57 @@ export default function Home() {
     } catch {}
   }, [settings]);
 
+  // FLOWs: load once, persist on change. The persist effect SKIP-AND-ARMS on
+  // its own first run — both effects fire in the same mount commit (load's
+  // setFlows only schedules a re-render), so arming the flag from the load
+  // effect would still let the first persist run write "[]" over storage.
+  // This way: mount run skipped; the setFlows commit writes real data;
+  // deleting the last flow still persists; corrupt stored JSON is never
+  // overwritten (no setFlows → no second run).
+  const flowsLoaded = useRef(false);
+  useEffect(() => {
+    try {
+      const f = JSON.parse(localStorage.getItem(LS_FLOWS) || "[]");
+      if (Array.isArray(f)) setFlows(f);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    if (!flowsLoaded.current) {
+      flowsLoaded.current = true;
+      return;
+    }
+    try {
+      localStorage.setItem(LS_FLOWS, JSON.stringify(flows));
+    } catch (e) {
+      console.warn("FLOWs not saved (storage full?)", e);
+      alert("Couldn't save FLOWs — browser storage is full. Remove some FLOW knowledge documents.");
+    }
+  }, [flows]);
+
+  // Deleting a FLOW also detaches it from its chats (history stays; the ⚡
+  // marker and overrides disappear instead of dangling).
+  function deleteFlow(f: Flow) {
+    setFlows((prev) => prev.filter((x) => x.id !== f.id));
+    setChats((prev) => prev.map((c) => (c.flowId === f.id ? { ...c, flowId: undefined } : c)));
+  }
+
+  function saveFlow(f: Flow) {
+    setFlows((prev) => (prev.some((x) => x.id === f.id) ? prev.map((x) => (x.id === f.id ? f : x)) : [f, ...prev]));
+  }
+
+  // Run FLOW: a fresh chat bound to the specialist.
+  function runFlow(f: Flow) {
+    const pid = activeProject?.id ?? projects[0]?.id;
+    if (!pid) return;
+    const c: Chat = { id: uid(), title: "New chat", projectId: pid, messages: [], flowId: f.id };
+    setChats((prev) => [c, ...prev]);
+    setActiveId(c.id);
+    setFlowsOpen(false);
+    setSidebarOpen(false);
+  }
+
   const active = chats.find((c) => c.id === activeId);
+  const activeFlow = active?.flowId ? flows.find((f) => f.id === active.flowId) : undefined;
   const activeLoading = active ? !!loadingChats[active.id] : false;
   const activeStreaming = active ? !!streamingChats[active.id] : false;
   const activeStatus = (active ? statusByChat[active.id] : "") || STATUSES[0];
@@ -376,10 +434,26 @@ export default function Home() {
           message: text,
           conversationId: chatId,
           history,
-          mode,
+          // A FLOW can pin its own engine/tools/depth; otherwise header rules.
+          mode: activeFlow && activeFlow.engine !== "auto" ? activeFlow.engine : mode,
           instructions: combinedInstructions,
-          connectors: settings.connectors,
-          depth: settings.depth,
+          connectors: activeFlow
+            ? { ...settings.connectors, web: activeFlow.webSearch, vaultDepth: activeFlow.vaultDepth }
+            : settings.connectors,
+          depth: activeFlow && activeFlow.depth !== "default" ? activeFlow.depth : settings.depth,
+          flow: activeFlow
+            ? {
+                name: activeFlow.name,
+                description: activeFlow.description,
+                role: activeFlow.role,
+                goal: activeFlow.goal,
+                rules: activeFlow.rules,
+                tone: activeFlow.tone,
+                outputFormat: activeFlow.outputFormat,
+                avoid: activeFlow.avoid,
+                knowledge: activeFlow.knowledge,
+              }
+            : undefined,
           attachments: sentAttachments.length ? sentAttachments : undefined,
           images: sentImages.length ? sentImages : undefined,
           debug: settings.debugMode || undefined,
@@ -470,6 +544,9 @@ export default function Home() {
         break;
       }
     }
+    // Continuations keep the FLOW persona (behaviour fields only — the
+    // continue pipeline works from the draft tail, not knowledge docs).
+    const contFlow = chat.flowId ? flows.find((f) => f.id === chat.flowId) : undefined;
 
     setLoadingChats((p) => ({ ...p, [chatId]: true }));
     setStatusByChat((p) => ({ ...p, [chatId]: "Continuing from where it stopped…" }));
@@ -499,6 +576,18 @@ export default function Home() {
             openFence: (base.match(/^```/gm) ?? []).length % 2 === 1,
           },
           instructions: combinedInstructions,
+          flow: contFlow
+            ? {
+                name: contFlow.name,
+                description: contFlow.description,
+                role: contFlow.role,
+                goal: contFlow.goal,
+                rules: contFlow.rules,
+                tone: contFlow.tone,
+                outputFormat: contFlow.outputFormat,
+                avoid: contFlow.avoid,
+              }
+            : undefined,
           connectors: settings.connectors,
           depth: settings.depth,
           debug: settings.debugMode || undefined,
@@ -714,6 +803,7 @@ export default function Home() {
             title="Double-click to rename"
             className="flex-1 min-w-0 truncate px-3 py-2 text-sm text-left"
           >
+            {c.flowId ? "⚡ " : ""}
             {c.title || "New chat"}
           </button>
         )}
@@ -877,6 +967,13 @@ export default function Home() {
           >
             + New project
           </button>
+          <button
+            onClick={() => setFlowsOpen(true)}
+            className="w-full rounded-lg px-3 py-1.5 text-xs text-left text-[var(--muted)] hover:bg-[var(--hover)] transition-colors"
+          >
+            ⚡ FLOWs
+            {flows.length > 0 && <span className="ml-1 text-[var(--muted-2)]">({flows.length})</span>}
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-2 space-y-2">
@@ -942,9 +1039,20 @@ export default function Home() {
             ☰
           </button>
           <span className="font-semibold">IntelBot</span>
-          <span className="hidden lg:inline text-xs text-[var(--muted-2)] truncate">
-            {activeProject ? activeProject.name : "Noonan"} · grounded in your knowledge base
-          </span>
+          {activeFlow ? (
+            <button
+              onClick={() => setFlowModal({ flow: activeFlow, isNew: false })}
+              title={`${activeFlow.description}\nClick to edit this FLOW.`}
+              className="flex min-w-0 items-center gap-1 rounded-full border border-[var(--border-2)] bg-[var(--surface)] px-2.5 py-1 text-xs text-[var(--text)] hover:border-[var(--accent)] transition-colors"
+            >
+              <span>{activeFlow.icon}</span>
+              <span className="truncate max-w-[140px]">{activeFlow.name}</span>
+            </button>
+          ) : (
+            <span className="hidden lg:inline text-xs text-[var(--muted-2)] truncate">
+              {activeProject ? activeProject.name : "Noonan"} · grounded in your knowledge base
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-2 text-xs">
             <button
               onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
@@ -954,10 +1062,15 @@ export default function Home() {
               {theme === "dark" ? "☀️" : "🌙"}
             </button>
             <select
-              value={settings.depth}
+              value={activeFlow && activeFlow.depth !== "default" ? activeFlow.depth : settings.depth}
+              disabled={!!activeFlow && activeFlow.depth !== "default"}
               onChange={(e) => setSettings((s) => ({ ...s, depth: e.target.value as Depth }))}
-              title={DEPTHS.find((d) => d.id === settings.depth)?.hint}
-              className="rounded-lg border border-[var(--border-2)] bg-[var(--panel)] px-2 py-1.5 text-[var(--text)] outline-none hover:border-[var(--accent)] cursor-pointer"
+              title={
+                activeFlow && activeFlow.depth !== "default"
+                  ? `Pinned by the "${activeFlow.name}" FLOW`
+                  : DEPTHS.find((d) => d.id === settings.depth)?.hint
+              }
+              className="rounded-lg border border-[var(--border-2)] bg-[var(--panel)] px-2 py-1.5 text-[var(--text)] outline-none hover:border-[var(--accent)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {DEPTHS.map((d) => (
                 <option key={d.id} value={d.id} className="bg-[var(--panel)]">
@@ -965,44 +1078,71 @@ export default function Home() {
                 </option>
               ))}
             </select>
-            <div className="flex items-center rounded-lg border border-[var(--border-2)] p-0.5">
-              <button
-                onClick={() => setMode("team")}
-                title="Teams — swarm collaboration for complex work: three models fan out in parallel and a synthesiser merges them. Best for strategy, complex analysis and competing viewpoints."
-                className={`rounded-md px-2.5 py-1 transition-colors ${
-                  mode === "team" ? "bg-[var(--user-bubble)] text-white" : "text-[var(--muted)] hover:text-[var(--text)]"
-                }`}
-              >
-                Teams
-              </button>
-              <button
-                onClick={() => setMode("agent")}
-                title="Agents — step-by-step relay built for efficient execution: Perplexity researches → GPT synthesises → Claude QAs and formats the final. Best for cost-efficient, repeatable, structured outputs."
-                className={`rounded-md px-2.5 py-1 transition-colors ${
-                  mode === "agent" ? "bg-[var(--user-bubble)] text-white" : "text-[var(--muted)] hover:text-[var(--text)]"
-                }`}
-              >
-                Agents
-              </button>
-              <button
-                onClick={() => setMode("hybrid")}
-                title="Hybrid — research-first AI comparison with final decision making: Perplexity researches once, GPT + Claude draft in parallel, GPT compares and merges the final answer. Best for high-value answers needing accuracy and polish."
-                className={`rounded-md px-2.5 py-1 transition-colors ${
-                  mode === "hybrid" ? "bg-[var(--user-bubble)] text-white" : "text-[var(--muted)] hover:text-[var(--text)]"
-                }`}
-              >
-                Hybrid
-              </button>
-            </div>
+            {(() => {
+              // A FLOW that pins its engine greys the toggle out (the pin wins
+              // in send()) — controls must never look active while ignored.
+              const pinned = !!activeFlow && activeFlow.engine !== "auto";
+              const shown = pinned ? (activeFlow!.engine as "team" | "agent" | "hybrid") : mode;
+              const btn = (id: "team" | "agent" | "hybrid", label: string, hint: string) => (
+                <button
+                  onClick={() => setMode(id)}
+                  disabled={pinned}
+                  title={pinned ? `Engine pinned by the "${activeFlow!.name}" FLOW` : hint}
+                  className={`rounded-md px-2.5 py-1 transition-colors disabled:cursor-not-allowed ${
+                    shown === id
+                      ? `bg-[var(--user-bubble)] text-white ${pinned ? "opacity-60" : ""}`
+                      : `text-[var(--muted)] ${pinned ? "opacity-40" : "hover:text-[var(--text)]"}`
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+              return (
+                <div className="flex items-center rounded-lg border border-[var(--border-2)] p-0.5">
+                  {btn(
+                    "team",
+                    "Teams",
+                    "Teams — swarm collaboration for complex work: three models fan out in parallel and a synthesiser merges them. Best for strategy, complex analysis and competing viewpoints."
+                  )}
+                  {btn(
+                    "agent",
+                    "Agents",
+                    "Agents — step-by-step relay built for efficient execution: Perplexity researches → GPT synthesises → Claude QAs and formats the final. Best for cost-efficient, repeatable, structured outputs."
+                  )}
+                  {btn(
+                    "hybrid",
+                    "Hybrid",
+                    "Hybrid — research-first AI comparison with final decision making: Perplexity researches once, GPT + Claude draft in parallel, GPT compares and merges the final answer. Best for high-value answers needing accuracy and polish."
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </header>
 
         {active && active.messages.length === 0 && !activeLoading ? (
           <div className="flex-1 flex flex-col items-center justify-center px-4 pb-16">
-            <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--text)]">How can I help?</h1>
-            <p className="mt-2 mb-6 text-sm text-[var(--muted-2)] text-center">
-              Ask about NSW property, tenancy law, or anything in Noonan&apos;s knowledge base.
-            </p>
+            {activeFlow ? (
+              <>
+                <div className="text-4xl">{activeFlow.icon}</div>
+                <h1 className="mt-2 text-2xl sm:text-3xl font-semibold text-[var(--text)]">{activeFlow.name}</h1>
+                <p className="mt-2 mb-6 max-w-md text-sm text-[var(--muted-2)] text-center">
+                  {activeFlow.description || "A specialist FLOW."}
+                  {activeFlow.knowledge.length > 0 && (
+                    <span className="block mt-1 text-[var(--muted-2)]">
+                      📄 {activeFlow.knowledge.length} knowledge document{activeFlow.knowledge.length > 1 ? "s" : ""} loaded
+                    </span>
+                  )}
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--text)]">How can I help?</h1>
+                <p className="mt-2 mb-6 text-sm text-[var(--muted-2)] text-center">
+                  Ask about NSW property, tenancy law, or anything in Noonan&apos;s knowledge base.
+                </p>
+              </>
+            )}
             {composer()}
           </div>
         ) : (
@@ -1159,6 +1299,30 @@ export default function Home() {
           isNew={projectModal.isNew}
           onSave={(p) => saveProject(p, projectModal.isNew)}
           onClose={() => setProjectModal(null)}
+        />
+      )}
+      {flowsOpen && (
+        <FlowLibrary
+          flows={flows}
+          setFlows={setFlows}
+          onRun={runFlow}
+          onEdit={(f) => setFlowModal({ flow: f, isNew: false })}
+          onCreate={() =>
+            setFlowModal({
+              flow: { ...defaultFlow(), id: uid(), createdAt: Date.now(), updatedAt: Date.now() },
+              isNew: true,
+            })
+          }
+          onDelete={deleteFlow}
+          onClose={() => setFlowsOpen(false)}
+        />
+      )}
+      {flowModal && (
+        <FlowBuilder
+          flow={flowModal.flow}
+          isNew={flowModal.isNew}
+          onSave={saveFlow}
+          onClose={() => setFlowModal(null)}
         />
       )}
     </div>
