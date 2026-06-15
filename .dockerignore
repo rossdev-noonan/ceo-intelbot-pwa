@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.vaultcache
+npm-debug.log*
+.env*
+!.env.example
+*.md
+docs
+.claude
+_dev.log
+.DS_Store

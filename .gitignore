@@ -32,6 +32,12 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but DO commit the template (no secrets — documents required vars for deploy)
+!.env.example
+
+# local dev logs / scratch
+*.log
+_dev.log
 
 # vercel
 .vercel

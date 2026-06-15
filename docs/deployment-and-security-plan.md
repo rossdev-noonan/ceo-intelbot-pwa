@@ -13,8 +13,8 @@ Mike's device (PWA, any platform)
 Azure App Service (Linux) or container — runs `next start` (long-lived)
   ├─ Auth.js (Microsoft Entra ID provider), allowlist = Mike's account only
   ├─ /api/chat (brain) — protected; runs minutes; reads vault from disk
-  ├─ Vault on persistent disk — git clone of a PRIVATE vault repo
-  │     └─ scheduled `git pull` (or webhook) → app auto-reindexes on change
+  ├─ Vault on persistent disk — MIRROR of a SharePoint document library
+  │     └─ scheduled POST /api/sync (Graph pull) → app auto-reindexes on change
   ├─ Secrets — App Service config / Azure Key Vault (NOT in repo)
   └─ Audit log — append-only, encrypted, per question/answer
 ```
@@ -23,11 +23,52 @@ Why not Vercel/serverless: the vault is read from the filesystem, the PDF cache
 is written to disk, and answers run for minutes — all incompatible with
 read-only/ephemeral serverless. Use a persistent Node host.
 
-## Obsidian across devices (the elegant part)
-The vault is already a git repo. Flow: Mike's Obsidian (Obsidian Git plugin or
-Obsidian Sync → git) auto-commits to a **private vault repo**; the server does a
-scheduled `git pull`; the app re-indexes on the file-signature change (already
-implemented). Mike edits on any device; the server always has the current vault.
+## Obsidian + SharePoint sync (the elegant part) — IMPLEMENTED
+Decision (2026-06-15): the vault transport is **SharePoint**, not git. One
+mechanism serves both "Obsidian syncing" and the "connect to SharePoint" ask:
+
+```
+Mike's Obsidian (any device)
+  → OneDrive client syncs the vault folder into a SharePoint document library
+  → server pulls it via Microsoft Graph (app-only) into a local mirror
+  → BM25 index rebuilds on the file-signature change (already implemented)
+```
+
+Code (this build):
+- `lib/graph.ts` — app-only Graph client (token, site/drive resolution, list,
+  download, upload). Reuses the Entra app; gated on `SHAREPOINT_*` env.
+- `lib/sharepoint.ts` — `syncVault()` mirrors the library folder to
+  `SHAREPOINT_SYNC_DIR` via a manifest (only fetches changed files); `saveAnswer()`
+  uploads exports back.
+- `lib/vault.ts` — when SharePoint is configured, `VAULT_PATH` resolves to the
+  mirror dir; otherwise unchanged (local-vault dev still works).
+- `POST /api/sync` — pull + reindex (auth, or `Bearer SYNC_SECRET` for a cron);
+  `GET /api/sync` — last-sync status.
+- `POST /api/save` + the answer "☁ Save to SharePoint" menu item — save any
+  answer (as Markdown) back to the library, so outputs round-trip into the vault.
+
+Scheduling the pull: a timer (Azure App Service WebJob / Logic App / external
+cron) hits `POST /api/sync` with the `SYNC_SECRET` bearer on an interval
+(e.g. every 5–15 min). Git pull remains a viable alternative if SharePoint is
+ever unavailable.
+
+### Graph app-permission setup (one-time, Mike's tenant)
+On the existing **IntelBot PWA** Entra app registration:
+- "API permissions" → Add a permission → Microsoft Graph → **Application
+  permissions** → add **`Sites.Selected`** (least privilege; preferred). Grant
+  admin consent.
+- Grant the app access to ONLY the IntelBot site (so `Sites.Selected` resolves).
+  Using Graph (as a Sites admin), `POST /sites/{site-id}/permissions` with
+  `roles: ["write"]` and the app's client id + displayName. (Broader fallback:
+  use `Sites.ReadWrite.All` instead and skip the per-site grant.)
+- No new secret needed — the daemon reuses `AUTH_MICROSOFT_ENTRA_ID_ID/SECRET`.
+- Fill the `SHAREPOINT_*` env (see `.env.example`): `SHAREPOINT_SITE_PATH`
+  (e.g. `noonan.sharepoint.com:/sites/IntelBot`), `SHAREPOINT_VAULT_FOLDER`,
+  optionally `SHAREPOINT_SAVE_FOLDER`, and `SYNC_SECRET`.
+
+> Data boundary note: vault content retrieved from SharePoint still feeds the
+> LLMs, so the same MNPI/sensitivity rules apply — keep the synced library to
+> public/business-planning material, not client-identifiable or insider data.
 
 ## Build sequence
 
@@ -39,8 +80,9 @@ implemented). Mike edits on any device; the server always has the current vault.
 4. **HTTPS only** — provided by App Service; enforce secure cookies.
 
 ### Phase B — Make it hosted + multi-device (P0)
-5. `output: "standalone"` + Dockerfile (or App Service Node config).
-6. Vault on a persistent path (`VAULT_PATH`), git-clone + scheduled `git pull`.
+5. `output: "standalone"` + Dockerfile (or App Service Node config). **DONE.**
+6. Vault from SharePoint → local mirror on a persistent volume
+   (`SHAREPOINT_SYNC_DIR`); scheduled `POST /api/sync` reindexes. **DONE (code).**
 7. Secrets in App Service config / Key Vault. Remove all keys from any machine.
 8. Install as PWA on Mike's devices (manifest already present; add icons).
 
@@ -74,4 +116,12 @@ These become env vars: `AUTH_MICROSOFT_ENTRA_ID_ID`,
 
 ## Status
 - Brain / RAG / routing / export / formatting: **done**.
-- Auth, hosting, vault-sync, audit, handover: **to build** (this plan).
+- Auth (Entra ID + allowlist): **done**.
+- Standalone build + Dockerfile: **done**.
+- SharePoint vault sync + save-back (`lib/graph.ts`, `lib/sharepoint.ts`,
+  `/api/sync`, `/api/save`): **done (code)** — needs the one-time Graph
+  `Sites.Selected` consent + `SHAREPOINT_*` env to go live.
+- Blocked on Mike: deploy target/host + DNS + Entra redirect URIs; the
+  SharePoint site URL + admin consent; scheduled-sync wiring on the host.
+- Still to build (P1): audit log, server-side chat storage, rate limiting,
+  security headers, handover (Mike's own keys + ownership).

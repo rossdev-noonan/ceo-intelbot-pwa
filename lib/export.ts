@@ -140,6 +140,46 @@ export function downloadJson(answer: string, title: string, question?: string): 
   triggerDownload(`${slug(title)}.json`, JSON.stringify(payload, null, 2), "application/json;charset=utf-8");
 }
 
+// --- Save to SharePoint ----------------------------------------------------
+
+// Base64-encode a Blob in the browser (chunked to avoid call-stack limits on
+// large inputs) for the JSON POST to /api/save.
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CH));
+  }
+  return btoa(binary);
+}
+
+// Save any export (the same bytes the download buttons produce) back to the
+// configured SharePoint folder. Pass the built content + filename + MIME, e.g.
+//   saveToSharePoint(`${slug(title)}.md`, content, "text/markdown")
+// Returns { ok, webUrl } so the UI can link to the saved file.
+export async function saveToSharePoint(
+  filename: string,
+  content: string | Blob,
+  mime: string
+): Promise<{ ok: boolean; webUrl?: string; error?: string }> {
+  const blob = typeof content === "string" ? new Blob([content], { type: mime }) : content;
+  const contentBase64 = await blobToBase64(blob);
+  try {
+    const res = await fetch("/api/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename, contentBase64, mime }),
+    });
+    return (await res.json()) as { ok: boolean; webUrl?: string; error?: string };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "request failed" };
+  }
+}
+
+// The slug helper is internal; expose it so callers can build matching filenames.
+export { slug as exportSlug };
+
 // Open a print-ready window from the already-rendered answer HTML; the user
 // chooses "Save as PDF". Produces a clean, selectable-text document.
 export function printAnswer(innerHtml: string, title: string, question?: string): void {

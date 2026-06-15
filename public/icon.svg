@@ -1,0 +1,12 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="IntelBot">
+  <!-- App background — IntelBot navy. rx leaves a maskable safe zone. -->
+  <rect width="512" height="512" rx="112" fill="#0b1220"/>
+  <!-- Analyst mark: three ascending bars, the lead bar in Noonan red. -->
+  <g>
+    <rect x="150" y="300" width="56" height="86"  rx="16" fill="#9aa4b2"/>
+    <rect x="228" y="244" width="56" height="142" rx="16" fill="#cbd5e1"/>
+    <rect x="306" y="170" width="56" height="216" rx="16" fill="#e11d2a"/>
+  </g>
+  <!-- Spark above the lead bar. -->
+  <circle cx="334" cy="132" r="20" fill="#e11d2a"/>
+</svg>

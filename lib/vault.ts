@@ -1,14 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
+import { graphConfigured, syncDir } from "@/lib/sharepoint";
 
-// The Obsidian knowledge base the PWA is grounded in. Override with VAULT_PATH
-// in .env.local if the vault ever moves.
-export const VAULT_PATH =
-  process.env.VAULT_PATH ||
-  "C:\\Users\\Rossrival-Noonan\\Documents\\ross-vault-01";
+// The Obsidian knowledge base the PWA is grounded in.
+//   - SharePoint configured (production): index the local mirror that
+//     lib/sharepoint.ts syncs down from the document library.
+//   - Otherwise (local dev): VAULT_PATH env, else the default local vault.
+// The indexer is unchanged either way — it just walks this directory.
+export const VAULT_PATH = graphConfigured()
+  ? syncDir()
+  : process.env.VAULT_PATH ||
+    "C:\\Users\\Rossrival-Noonan\\Documents\\ross-vault-01";
 
-// Folders we never index — Obsidian internals, version control, trash.
-const SKIP_DIRS = new Set([".obsidian", ".trash", ".git", "node_modules"]);
+// Folders we never index — Obsidian internals, plugin caches, version control, trash.
+const SKIP_DIRS = new Set([".obsidian", ".smart-env", ".trash", ".git", "node_modules"]);
 
 // Text-based file types we index directly (read as UTF-8). PDFs are handled
 // separately. Anything else (images, office binaries) is skipped.

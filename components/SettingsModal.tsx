@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PLANNED_CONNECTORS, type Settings } from "@/lib/uiTypes";
 
 export default function SettingsModal({
@@ -97,6 +97,12 @@ export default function SettingsModal({
           </div>
         </section>
 
+        {/* Knowledge sync — SharePoint → vault */}
+        <section className="mb-5">
+          <h3 className="text-sm font-medium text-[var(--text)] mb-2">Knowledge sync</h3>
+          <KnowledgeSync />
+        </section>
+
         {/* Planned external connectors (stubs) */}
         <section className="mb-5">
           <h3 className="text-sm font-medium text-[var(--text)] mb-2">
@@ -134,6 +140,110 @@ export default function SettingsModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+type SyncStatus = {
+  configured: boolean;
+  lastSync: string | null;
+  fileCount: number;
+  dir: string;
+};
+
+// Vault sync panel: shows SharePoint connection status + a manual "Sync now".
+function KnowledgeSync() {
+  const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [msg, setMsg] = useState<string>("");
+
+  const loadStatus = useCallback(async (): Promise<SyncStatus | null> => {
+    try {
+      const r = await fetch("/api/sync");
+      return (await r.json()) as SyncStatus & { ok: boolean };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Fetch sync status on mount. setState lives in the .then callback so it runs
+  // after the fetch resolves, not synchronously inside the effect body.
+  useEffect(() => {
+    let active = true;
+    loadStatus().then((j) => {
+      if (!active) return;
+      setStatus(j);
+      setLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [loadStatus]);
+
+  const syncNow = async () => {
+    setSyncing(true);
+    setMsg("");
+    try {
+      const r = await fetch("/api/sync", { method: "POST" });
+      const j = await r.json();
+      if (j.ok) {
+        const s = j.sync;
+        setMsg(`✓ Synced ${s.total} files (${s.downloaded} updated, ${s.deleted} removed).`);
+        setStatus(await loadStatus());
+      } else {
+        setMsg(`✕ ${j.error ?? "sync failed"}`);
+      }
+    } catch (e) {
+      setMsg(`✕ ${e instanceof Error ? e.message : "request failed"}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  if (loading) {
+    return <p className="text-xs text-[var(--muted-2)]">Checking sync status…</p>;
+  }
+
+  if (!status?.configured) {
+    return (
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+        <p className="text-xs text-[var(--muted-2)]">
+          SharePoint vault sync isn&apos;t connected yet. Set the{" "}
+          <span className="font-mono">SHAREPOINT_*</span> environment variables to pull the
+          vault from SharePoint.
+        </p>
+      </div>
+    );
+  }
+
+  const last = status.lastSync ? new Date(status.lastSync).toLocaleString() : "Never";
+
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 text-xs text-[var(--muted-2)]">
+          <div className="text-[var(--text)]">SharePoint → vault</div>
+          <div>
+            Last sync: <span className="text-[var(--muted)]">{last}</span>
+          </div>
+          <div>
+            Files: <span className="text-[var(--muted)]">{status.fileCount}</span>
+          </div>
+        </div>
+        <button
+          onClick={syncNow}
+          disabled={syncing}
+          className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors ${
+            syncing
+              ? "bg-[var(--border-2)] cursor-not-allowed"
+              : "bg-[var(--accent)] hover:bg-[var(--accent-hover)]"
+          }`}
+        >
+          {syncing ? "Syncing…" : "Sync now"}
+        </button>
+      </div>
+      {msg && <p className="mt-2 text-xs text-[var(--muted)]">{msg}</p>}
     </div>
   );
 }

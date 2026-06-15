@@ -6,6 +6,10 @@ export const metadata: Metadata = {
   description:
     "Noonan IntelBot — your AI analyst, grounded in Noonan's own knowledge base.",
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }, { url: "/favicon.ico" }],
+    apple: [{ url: "/icon.svg" }],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",

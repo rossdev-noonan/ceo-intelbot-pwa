@@ -6,6 +6,7 @@ import { routeMessage } from "@/lib/router";
 import { flowInstructions, type FlowConfig } from "@/lib/prompts";
 import { FLOW_DOC_MAX, FLOW_KNOWLEDGE_MAX } from "@/lib/uiTypes";
 import { checkSensitivity, sensitivityRefusal } from "@/lib/sensitivity";
+import { logAudit } from "@/lib/audit";
 import { requireUser } from "@/auth";
 
 export const dynamic = "force-dynamic";
@@ -90,7 +91,15 @@ export async function POST(req: Request) {
   // BEFORE any model is called.
   const sens = checkSensitivity(message);
   if (sens.blocked) {
-    return streamReply(sensitivityRefusal(sens.categories), `blocked: sensitivity gate (${sens.categories.join(", ")})`);
+    const refusal = sensitivityRefusal(sens.categories);
+    logAudit({
+      user: gate.email || "local-dev",
+      question: message,
+      answer: refusal,
+      mode: "blocked",
+      route: `sensitivity: ${sens.categories.join(", ")}`,
+    });
+    return streamReply(refusal, `blocked: sensitivity gate (${sens.categories.join(", ")})`);
   }
 
   // FLOW runtime: the FLOW's behaviour block leads the instruction stack
@@ -158,12 +167,35 @@ export async function POST(req: Request) {
       ? hybridStream(message, body.history, opts)
       : answerStream(message, body.history, opts);
 
+  // Mode label for the audit log: the actual path that ran, not just the request.
+  const auditMode =
+    route.path === "continue"
+      ? "continue"
+      : route.path === "followup" || route.path === "followup_web"
+      ? "followup"
+      : body.mode || "team";
+
   const stream = new ReadableStream({
     async start(controller) {
       const send = (obj: unknown) => controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
       try {
         const wantDebug = isDev || !!body.debug;
         for await (const evt of events) {
+          // Audit every completed answer (question hashed, answer in clear).
+          // Read evt.debug here — it exists on the event before we strip it below.
+          if (evt.type === "done" && evt.answer) {
+            const d = (evt as { debug?: { engines?: string; sources?: unknown[]; totalMs?: number } }).debug;
+            logAudit({
+              user: gate.email || "local-dev",
+              question: message,
+              answer: evt.answer,
+              mode: auditMode,
+              route: route.reason,
+              engines: d?.engines,
+              sources: Array.isArray(d?.sources) ? d.sources.length : undefined,
+              totalMs: d?.totalMs,
+            });
+          }
           // The debug trace travels only when debug mode asks for it; the
           // truncated flag is user-facing state and must always survive.
           if (evt.type === "done" && !wantDebug) {

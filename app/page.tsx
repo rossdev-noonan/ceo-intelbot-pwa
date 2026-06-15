@@ -17,6 +17,8 @@ import {
   downloadExcel,
   downloadText,
   downloadJson,
+  saveToSharePoint,
+  exportSlug,
 } from "@/lib/export";
 import {
   DEFAULT_SETTINGS,
@@ -67,11 +69,91 @@ function uid() {
 const EXPORT_BTN =
   "rounded-md border border-[var(--border-2)] px-2 py-1 text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)] transition-colors";
 
+// One-time reads from localStorage, run as useState lazy initializers below.
+// On the server (no window) they return the same defaults the UI rendered with
+// before, so nothing is read during SSR; the real values are read on the first
+// client render. This replaces the old mount effects that hydrated via setState
+// (cascading-render lint violations) while keeping the load-once behaviour.
+function loadInitialData(): {
+  projects: Project[];
+  settings: Settings;
+  chats: Chat[];
+  activeId: string;
+} {
+  if (typeof window === "undefined") {
+    return { projects: [], settings: DEFAULT_SETTINGS, chats: [], activeId: "" };
+  }
+
+  let projs: Project[] = [];
+  try {
+    projs = JSON.parse(localStorage.getItem(LS_PROJECTS) || "[]");
+  } catch {}
+  if (!Array.isArray(projs) || projs.length === 0) {
+    projs = [{ id: uid(), name: "General", instructions: "" }];
+  }
+  const defaultPid = projs[0].id;
+
+  let st: Settings = DEFAULT_SETTINGS;
+  try {
+    const raw = localStorage.getItem(LS_SETTINGS);
+    if (raw) {
+      const p = JSON.parse(raw);
+      st = {
+        globalInstructions: p.globalInstructions ?? "",
+        connectors: { ...DEFAULT_CONNECTORS, ...(p.connectors || {}) },
+        depth: p.depth ?? "auto",
+        debugMode: p.debugMode ?? false,
+      };
+    }
+  } catch {}
+
+  let cs: Chat[] = [];
+  try {
+    cs = JSON.parse(localStorage.getItem(LS_KEY) || "[]");
+  } catch {}
+  if (!Array.isArray(cs)) cs = [];
+  const pids = new Set(projs.map((p) => p.id));
+  cs = cs.map((c) => ({
+    ...c,
+    projectId: c.projectId && pids.has(c.projectId) ? c.projectId : defaultPid,
+  }));
+  if (cs.length === 0) {
+    cs = [{ id: uid(), title: "New chat", projectId: defaultPid, messages: [] }];
+  }
+
+  return { projects: projs, settings: st, chats: cs, activeId: cs[0].id };
+}
+
+function loadFlows(): Flow[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const f = JSON.parse(localStorage.getItem(LS_FLOWS) || "[]");
+    if (Array.isArray(f)) return f;
+  } catch {}
+  return [];
+}
+
+function loadTheme(): "dark" | "light" {
+  if (typeof window === "undefined") return "dark";
+  const t = localStorage.getItem("intelbot_theme");
+  return t === "light" || t === "dark" ? t : "dark";
+}
+
+function loadSidebarOpen(): boolean {
+  // Sidebar starts open on desktop, closed on mobile.
+  if (typeof window === "undefined") return false;
+  return window.innerWidth >= 768;
+}
+
 export default function Home() {
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [activeId, setActiveId] = useState<string>("");
+  // Read projects/settings/chats from localStorage once (lazy init). The four
+  // values are interdependent (chats are re-homed onto valid project ids), so
+  // they're computed together here rather than in four separate initializers.
+  const [initial] = useState(loadInitialData);
+  const [chats, setChats] = useState<Chat[]>(initial.chats);
+  const [projects, setProjects] = useState<Project[]>(initial.projects);
+  const [settings, setSettings] = useState<Settings>(initial.settings);
+  const [activeId, setActiveId] = useState<string>(initial.activeId);
   const [input, setInput] = useState("");
   // Per-chat so a stream in one chat doesn't block sending in another.
   const [loadingChats, setLoadingChats] = useState<Record<string, boolean>>({});
@@ -84,21 +166,32 @@ export default function Home() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectModal, setProjectModal] = useState<{ project: Project; isNew: boolean } | null>(null);
-  const [flows, setFlows] = useState<Flow[]>([]);
+  const [flows, setFlows] = useState<Flow[]>(loadFlows);
   const [flowsOpen, setFlowsOpen] = useState(false);
   const [flowModal, setFlowModal] = useState<{ flow: Flow; isNew: boolean } | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [images, setImages] = useState<string[]>([]); // pasted/attached image data URLs
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(loadTheme);
+  const [sidebarOpen, setSidebarOpen] = useState(loadSidebarOpen);
   const [listening, setListening] = useState(false);
+  // False during SSR + the first client paint; flips true after mount. Gates the
+  // render below so localStorage-derived state (chats/flows/sidebar/theme) never
+  // causes a server/client hydration mismatch.
+  const [hydrated, setHydrated] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Mount flag — the one intentional setState-in-effect: it runs once after
+  // hydration so the client-only initial state can render mismatch-free.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHydrated(true);
+  }, []);
 
   // Auto-grow the composer so long queries are fully visible (no input cap).
   useEffect(() => {
@@ -108,16 +201,8 @@ export default function Home() {
     el.style.height = Math.min(el.scrollHeight, 192) + "px"; // matches max-h-48
   }, [input]);
 
-  // Sidebar starts open on desktop, closed on mobile.
-  useEffect(() => {
-    setSidebarOpen(window.innerWidth >= 768);
-  }, []);
-
-  // Theme: load saved preference, then apply + persist.
-  useEffect(() => {
-    const t = localStorage.getItem("intelbot_theme");
-    if (t === "light" || t === "dark") setTheme(t);
-  }, []);
+  // Theme: apply to <html> + persist on every change. The saved preference is
+  // read once via the loadTheme() lazy initializer above.
   useEffect(() => {
     document.documentElement.classList.toggle("light", theme === "light");
     try {
@@ -125,51 +210,9 @@ export default function Home() {
     } catch {}
   }, [theme]);
 
-  // Load projects, settings, and chats (with migration to the project model).
-  useEffect(() => {
-    let projs: Project[] = [];
-    try {
-      projs = JSON.parse(localStorage.getItem(LS_PROJECTS) || "[]");
-    } catch {}
-    if (!Array.isArray(projs) || projs.length === 0) {
-      projs = [{ id: uid(), name: "General", instructions: "" }];
-    }
-    const defaultPid = projs[0].id;
-
-    let st: Settings = DEFAULT_SETTINGS;
-    try {
-      const raw = localStorage.getItem(LS_SETTINGS);
-      if (raw) {
-        const p = JSON.parse(raw);
-        st = {
-          globalInstructions: p.globalInstructions ?? "",
-          connectors: { ...DEFAULT_CONNECTORS, ...(p.connectors || {}) },
-          depth: p.depth ?? "auto",
-          debugMode: p.debugMode ?? false,
-        };
-      }
-    } catch {}
-
-    let cs: Chat[] = [];
-    try {
-      cs = JSON.parse(localStorage.getItem(LS_KEY) || "[]");
-    } catch {}
-    if (!Array.isArray(cs)) cs = [];
-    const pids = new Set(projs.map((p) => p.id));
-    cs = cs.map((c) => ({
-      ...c,
-      projectId: c.projectId && pids.has(c.projectId) ? c.projectId : defaultPid,
-    }));
-    if (cs.length === 0) {
-      cs = [{ id: uid(), title: "New chat", projectId: defaultPid, messages: [] }];
-    }
-
-    setProjects(projs);
-    setSettings(st);
-    setChats(cs);
-    setActiveId(cs[0].id);
-  }, []);
-
+  // Projects/settings/chats are loaded once via the loadInitialData() lazy
+  // initializer above (with migration to the project model). These effects only
+  // persist later changes back to localStorage.
   useEffect(() => {
     if (chats.length) {
       try {
@@ -192,20 +235,12 @@ export default function Home() {
     } catch {}
   }, [settings]);
 
-  // FLOWs: load once, persist on change. The persist effect SKIP-AND-ARMS on
-  // its own first run — both effects fire in the same mount commit (load's
-  // setFlows only schedules a re-render), so arming the flag from the load
-  // effect would still let the first persist run write "[]" over storage.
-  // This way: mount run skipped; the setFlows commit writes real data;
-  // deleting the last flow still persists; corrupt stored JSON is never
-  // overwritten (no setFlows → no second run).
+  // FLOWs: loaded once via the loadFlows() lazy initializer above; this effect
+  // persists later changes. It SKIP-AND-ARMS on its first (mount) run so it
+  // never rewrites storage on load — important because corrupt stored JSON
+  // reads back as [] and we must not overwrite it with "[]". Deleting the last
+  // flow still persists (that's a post-mount change).
   const flowsLoaded = useRef(false);
-  useEffect(() => {
-    try {
-      const f = JSON.parse(localStorage.getItem(LS_FLOWS) || "[]");
-      if (Array.isArray(f)) setFlows(f);
-    } catch {}
-  }, []);
   useEffect(() => {
     if (!flowsLoaded.current) {
       flowsLoaded.current = true;
@@ -274,7 +309,6 @@ export default function Home() {
   const lastUserMsgId = active?.messages.filter((m) => m.role === "user").slice(-1)[0]?.id;
   useEffect(() => {
     if (lastUserMsgId) scrollQuestionToTop(lastUserMsgId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastUserMsgId, activeId]);
 
   // Follow the stream only when the user is already near the bottom (spec:
@@ -938,6 +972,10 @@ export default function Home() {
     );
   }
 
+  // Render nothing until mounted: server HTML and the first client render are
+  // both this empty shell, so they match; the real UI paints once hydrated.
+  if (!hydrated) return <div className="h-screen w-screen bg-[var(--bg)]" />;
+
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       {/* Mobile backdrop — fades in/out, stays mounted so it can animate both ways. */}
@@ -1277,6 +1315,15 @@ export default function Home() {
                             })}
                             {menuItem("CSV", () => downloadCsv(m.content, title), !hasTables)}
                             {menuItem("JSON", () => downloadJson(m.content, title, q))}
+                            {menuItem("☁ Save to SharePoint", async () => {
+                              const r = await saveToSharePoint(
+                                `${exportSlug(title)}.md`,
+                                m.content,
+                                "text/markdown;charset=utf-8"
+                              );
+                              if (r.ok && r.webUrl) window.open(r.webUrl, "_blank");
+                              else alert(`Save failed: ${r.error ?? "unknown error"}`);
+                            })}
                           </div>
                         </details>
                       </div>
