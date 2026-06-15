@@ -67,10 +67,13 @@ async function extractOne(name: string, data: Uint8Array): Promise<{ text: strin
   const ext = extOf(lower);
   try {
     if (ext === ".pdf") {
-      const { PDFParse } = await import("pdf-parse");
-      const r = await new PDFParse({ data: Buffer.from(data) }).getText();
-      const text = String(r.text ?? "").trim();
-      return text ? { text } : { error: "no extractable text (scanned PDF?)" };
+      // unpdf bundles a server-native pdf.js build — works in Node/serverless
+      // without the browser globals (DOMMatrix etc.) that pdf-parse required.
+      const { extractText, getDocumentProxy } = await import("unpdf");
+      const pdf = await getDocumentProxy(data);
+      const { text } = await extractText(pdf, { mergePages: true });
+      const out = (Array.isArray(text) ? text.join("\n\n") : String(text ?? "")).trim();
+      return out ? { text: out } : { error: "no extractable text (scanned PDF?)" };
     }
     if (ext === ".docx") {
       const mammoth = interop(await import("mammoth"));

@@ -175,16 +175,12 @@ function savePdfCache(cache: PdfCache): void {
 }
 
 async function extractPdfPages(abs: string): Promise<string[]> {
-  const { PDFParse } = await import("pdf-parse");
+  // unpdf's server-native pdf.js build works in Node (no DOMMatrix/browser globals).
+  const { extractText, getDocumentProxy } = await import("unpdf");
   const buf = fs.readFileSync(abs);
-  const parser = new PDFParse({ data: buf });
-  const r = await parser.getText();
-  // r.pages is an array of per-page strings/objects; fall back to splitting text.
-  const pages = Array.isArray(r.pages)
-    ? r.pages.map((p: unknown) =>
-        typeof p === "string" ? p : ((p as { text?: string })?.text ?? "")
-      )
-    : String(r.text ?? "").split("\f");
+  const pdf = await getDocumentProxy(new Uint8Array(buf));
+  const { text } = await extractText(pdf, { mergePages: false });
+  const pages = Array.isArray(text) ? text : [String(text ?? "")];
   return pages.map((p) => p.trim()).filter(Boolean);
 }
 
