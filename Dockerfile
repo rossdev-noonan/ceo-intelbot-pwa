@@ -31,10 +31,10 @@ COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=build --chown=nextjs:nodejs /app/public ./public
 
-# Writable mount point for the SharePoint vault mirror + PDF cache. Mount a
-# persistent volume here in production (SHAREPOINT_SYNC_DIR=/app/.vaultcache/sharepoint).
+# Writable mount point for the SharePoint vault mirror + PDF cache + audit log.
+# Attach a Railway Volume to /app/.vaultcache in the dashboard for persistence
+# (Railway rejects the Docker VOLUME instruction — it uses its own Volumes).
 RUN mkdir -p /app/.vaultcache && chown -R nextjs:nodejs /app/.vaultcache
-VOLUME /app/.vaultcache
 
 USER nextjs
 EXPOSE 3000
