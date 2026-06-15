@@ -22,6 +22,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
+# Next.js standalone binds to localhost by default — bind to all interfaces so
+# the platform (Railway) can reach the server + healthcheck. Railway injects its
+# own PORT at runtime, which overrides the ENV above.
+ENV HOSTNAME=0.0.0.0
 # Non-root runtime user.
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 nextjs
