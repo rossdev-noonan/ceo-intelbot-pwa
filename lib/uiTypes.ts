@@ -17,7 +17,7 @@ export const DEFAULT_CONNECTORS: Connectors = { web: true, fetch: true, vaultDep
 export const DEFAULT_SETTINGS: Settings = {
   globalInstructions: "",
   connectors: DEFAULT_CONNECTORS,
-  depth: "auto",
+  depth: "pro",
   debugMode: false,
 };
 

@@ -101,7 +101,9 @@ function loadInitialData(): {
       st = {
         globalInstructions: p.globalInstructions ?? "",
         connectors: { ...DEFAULT_CONNECTORS, ...(p.connectors || {}) },
-        depth: p.depth ?? "auto",
+        // Force Pro depth by default (even over a previously-saved "auto") —
+        // Auto was routing real questions to cheap/shallow paths.
+        depth: "pro",
         debugMode: p.debugMode ?? false,
       };
     }
@@ -159,7 +161,7 @@ export default function Home() {
   const [loadingChats, setLoadingChats] = useState<Record<string, boolean>>({});
   const [streamingChats, setStreamingChats] = useState<Record<string, boolean>>({});
   const [statusByChat, setStatusByChat] = useState<Record<string, string>>({});
-  const [mode, setMode] = useState<"team" | "agent" | "hybrid">("team");
+  const [mode, setMode] = useState<"team" | "agent" | "hybrid">("hybrid");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
