@@ -162,7 +162,7 @@ export default function Home() {
   const [loadingChats, setLoadingChats] = useState<Record<string, boolean>>({});
   const [streamingChats, setStreamingChats] = useState<Record<string, boolean>>({});
   const [statusByChat, setStatusByChat] = useState<Record<string, string>>({});
-  const [mode, setMode] = useState<"team" | "agent" | "hybrid">("hybrid");
+  const [mode, setMode] = useState<"team" | "agent" | "hybrid">("team");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});

@@ -32,10 +32,6 @@ const PRIOR_REF =
 const NEEDS_KB =
   /\b(our|noonan'?s?|the (vault|knowledge base)|internal|company|office) (process|policy|procedure|workflow|notes?|documents?|training|checklist|template)|\bvault\b|knowledge base/i;
 
-// Short question shapes that ride on conversation context.
-const SMALL_QUESTION =
-  /^(what|why|how|when|where|who|which|does|do|did|is|are|was|were|can|could|should|would|will)\b[\s\S]{0,180}\?\s*$/i;
-
 export function routeMessage(
   message: string,
   history: Turn[] | undefined,
@@ -59,8 +55,12 @@ export function routeMessage(
   // Long messages are new briefs/documents, not follow-ups.
   if (text.length > 600) return { path: "full", reason: "long message — treated as a new task" };
 
-  const looksLikeFollowup = TRANSFORM.test(text) || (PRIOR_REF.test(text) && text.length <= 400) || SMALL_QUESTION.test(text);
-  if (!looksLikeFollowup) return { path: "full", reason: "not recognisably a follow-up" };
+  // Quality-first: only TRUE transforms of prior content ("shorten that",
+  // "make it a table") ride the cheap path. A substantive question — even a
+  // short one — gets the full machinery (models + web + vault), never the cheap
+  // cached path. We never route below the single-LLM baseline to save tokens.
+  const looksLikeFollowup = TRANSFORM.test(text) || (PRIOR_REF.test(text) && text.length <= 400);
+  if (!looksLikeFollowup) return { path: "full", reason: "not a pure transform — full machinery" };
 
   if (FRESHNESS.test(text)) {
     return { path: "followup_web", reason: "follow-up needing a narrow current-data check" };

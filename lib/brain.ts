@@ -41,7 +41,10 @@ export function resolveDepth(depth?: string): ReasoningConfig {
     case "instant":
       return { openaiEffort: "low", claudeEffort: "low" };
     case "pro":
-      return { openaiEffort: "xhigh", claudeEffort: "xhigh" };
+      // Opus (lead analyst + synthesiser) stays at max depth — it drives final
+      // quality. GPT at "high" is still excellent but far faster; "xhigh" pushed
+      // it past 200s and the pipeline waits on the slowest analyst.
+      return { openaiEffort: "high", claudeEffort: "xhigh" };
     case "thinking":
     default:
       return { openaiEffort: "high", claudeEffort: "high" };

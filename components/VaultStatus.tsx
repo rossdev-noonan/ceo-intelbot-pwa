@@ -22,8 +22,21 @@ export default function VaultStatus() {
       setStatus(null);
     }
   };
+  // Fetch status on mount. setState runs in the .then callback (after the fetch
+  // resolves), not synchronously in the effect body.
   useEffect(() => {
-    load();
+    let active = true;
+    fetch("/api/sync")
+      .then((r) => r.json())
+      .then((j) => {
+        if (active) setStatus(j as Status);
+      })
+      .catch(() => {
+        if (active) setStatus(null);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Hidden when SharePoint isn't configured (local dev) or after the user
