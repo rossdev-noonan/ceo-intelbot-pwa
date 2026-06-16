@@ -7,6 +7,7 @@ import ProjectModal from "@/components/ProjectModal";
 import Sources, { DebugTracePanel } from "@/components/Sources";
 import FlowLibrary from "@/components/FlowLibrary";
 import FlowBuilder from "@/components/FlowBuilder";
+import VaultStatus from "@/components/VaultStatus";
 import {
   downloadMarkdown,
   downloadCsv,
@@ -1189,6 +1190,10 @@ export default function Home() {
           </div>
         </header>
 
+        {/* Vault connection status — confirms the bot is connected to the
+            Noonan vault (via SharePoint), and prompts a sync if nothing loaded. */}
+        <VaultStatus />
+
         {active && active.messages.length === 0 && !activeLoading ? (
           <div className="flex-1 flex flex-col items-center justify-center px-4 pb-16">
             {activeFlow ? (
@@ -1317,7 +1322,7 @@ export default function Home() {
                             })}
                             {menuItem("CSV", () => downloadCsv(m.content, title), !hasTables)}
                             {menuItem("JSON", () => downloadJson(m.content, title, q))}
-                            {menuItem("☁ Save to SharePoint", async () => {
+                            {menuItem("☁ Save to my vault", async () => {
                               const r = await saveToSharePoint(
                                 `${exportSlug(title)}.md`,
                                 m.content,
