@@ -143,9 +143,11 @@ export async function* hybridStream(
       `<user_question>\n${question}\n</user_question>`;
     const cmp = await callOpenAI(withInstructions(HYBRID_COMPARISON_SYSTEM, opts.instructions), cmpInput, {
       model: MODELS.gptFlagship,
-      reasoningEffort: "medium",
+      // Adversarial cross-examination is the step that earns the second model —
+      // give it full reasoning, not the cheap middle-stage setting.
+      reasoningEffort: "high",
       maxTokens: COMPARISON_MAX_TOKENS,
-      name: "Comparison (GPT)",
+      name: "Cross-examination (GPT)",
     });
     stages.push({ name: cmp.name, ok: cmp.ok, ms: cmp.ms, error: cmp.error });
     // Normalise — never trust the cast. A malformed report degrades to null,

@@ -31,7 +31,16 @@ export type Candidate = {
 
 export type ComparisonReport = {
   agreement_points: string[];
-  disagreement_points: { issue: string; chatgpt_position: string; claude_position: string; preferred_resolution: string }[];
+  disagreement_points: {
+    issue: string;
+    chatgpt_position: string;
+    claude_position: string;
+    what_is_at_stake: string; // why a CEO should care which view is right
+    risk_if_wrong: string; // consequence of backing the losing position
+    preferred_resolution: string;
+  }[];
+  weakest_shared_assumptions: string[]; // where BOTH candidates may be wrong together
+  contrarian_case: string; // the strongest case against the leading answer
   selected_elements: { source_model: string; element: string; reason_selected: string }[];
   rejected_elements: { source_model: string; element: string; reason_rejected: string }[];
 };
@@ -92,8 +101,12 @@ export function normalizeComparison(j: unknown): ComparisonReport | null {
       issue: String(x.issue ?? ""),
       chatgpt_position: String(x.chatgpt_position ?? ""),
       claude_position: String(x.claude_position ?? ""),
+      what_is_at_stake: String(x.what_is_at_stake ?? ""),
+      risk_if_wrong: String(x.risk_if_wrong ?? ""),
       preferred_resolution: String(x.preferred_resolution ?? ""),
     })),
+    weakest_shared_assumptions: strArr(o.weakest_shared_assumptions),
+    contrarian_case: String(o.contrarian_case ?? ""),
     selected_elements: objArr(o.selected_elements, (x) => ({
       source_model: String(x.source_model ?? ""),
       element: String(x.element ?? ""),
@@ -108,6 +121,8 @@ export function normalizeComparison(j: unknown): ComparisonReport | null {
   const usable =
     report.agreement_points.length ||
     report.disagreement_points.length ||
+    report.weakest_shared_assumptions.length ||
+    report.contrarian_case.trim().length ||
     report.selected_elements.length ||
     report.rejected_elements.length;
   return usable ? report : null;
